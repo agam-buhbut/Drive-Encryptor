@@ -1,0 +1,27 @@
+[package]
+name = "drive-encryptor-gui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "drive-encryptor-gui"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+denc_core = { package = "drive-encryptor-core", path = "../core" }
+tauri.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rfd.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+hex.workspace = true
+zeroize.workspace = true
+getrandom.workspace = true

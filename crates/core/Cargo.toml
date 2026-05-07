@@ -1,0 +1,27 @@
+[package]
+name = "drive-encryptor-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "denc_core"
+path = "src/lib.rs"
+
+[dependencies]
+zeroize.workspace = true
+argon2.workspace = true
+aes-gcm.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+getrandom.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+hex.workspace = true
+rpassword.workspace = true
+tempfile.workspace = true
+nix.workspace = true
+printpdf.workspace = true
+tracing.workspace = true

@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Encrypt Drive Wizard — DriveEncryptor</title>
+  <link rel="stylesheet" href="css/win9x.css">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div class="desktop">
+    <div class="window wizard-window">
+
+      <div class="title-bar">
+        <span class="title-bar__icon" aria-hidden="true"></span>
+        <span class="title-bar__text">Encrypt Drive Wizard</span>
+        <div class="title-bar__buttons">
+          <button class="title-btn" aria-label="Minimize">_</button>
+          <button class="title-btn" aria-label="Close">×</button>
+        </div>
+      </div>
+
+      <div class="wizard">
+
+        <!-- Steps render their own banner so the title can change per page. -->
+        <div class="wizard__body">
+
+          <!-- Step 1: Confirm destruction --------------------------------- -->
+          <section class="wizard-step active" data-step="1" data-requires-ready data-ready="false">
+            <div class="wizard__banner">
+              <div class="wizard__banner-icon" style="color:#a00000;">!</div>
+              <div>
+                <h2>Confirm destruction</h2>
+                <p>All data on this drive will be destroyed.</p>
+              </div>
+            </div>
+            <div style="padding:12px 4px;">
+              <p>You are about to encrypt the drive below. Encryption is destructive — every existing partition, file, and filesystem on this drive will be wiped.</p>
+              <dl class="kv" id="drive-summary"></dl>
+              <p>To prevent accidents, type the drive's serial number to confirm.</p>
+              <div class="row">
+                <label for="serial-input" style="width:120px;">Drive serial:</label>
+                <input id="serial-input" type="text" class="grow" autocomplete="off" data-autofocus>
+              </div>
+              <p class="muted mt-1" id="serial-hint">Expected: <span id="expected-serial" class="mono"></span></p>
+            </div>
+          </section>
+
+          <!-- Step 2: Options --------------------------------------------- -->
+          <section class="wizard-step" data-step="2">
+            <div class="wizard__banner">
+              <div class="wizard__banner-icon" style="color:var(--win-title-active-l);">?</div>
+              <div>
+                <h2>Choose encryption mode</h2>
+                <p>Select how aggressively to wipe the drive before encrypting it.</p>
+              </div>
+            </div>
+            <div style="padding:12px 4px;">
+              <fieldset>
+                <legend>Mode</legend>
+                <label class="row mb-1"><input type="radio" name="mode" value="format" checked> Encrypt (fast) — lay out the encrypted volume directly.</label>
+                <label class="row"><input type="radio" name="mode" value="shred"> Shred + encrypt (slow) — overwrite the drive with random bytes first.</label>
+              </fieldset>
+              <div class="notice" id="shred-notice" style="display:none;">
+                <strong>About <code>--shred</code></strong>
+                Adds one full-drive write of cryptographically-random bytes before encryption. Defeats forensic recovery of any prior data and makes unused regions of the encrypted volume look like real ciphertext. On SSD/NVMe, wear-levelling means a single overwrite can't guarantee every physical cell is rewritten — for decommissioning, use hardware secure-erase. (DESIGN.md §4.2)
+              </div>
+            </div>
+          </section>
+
+          <!-- Step 3: Plan review ----------------------------------------- -->
+          <section class="wizard-step" data-step="3" data-requires-ready data-ready="true">
+            <div class="wizard__banner">
+              <div class="wizard__banner-icon" style="color:#c08000;">⚠</div>
+              <div>
+                <h2>Plan review</h2>
+                <p>Acknowledge each warning before continuing.</p>
+              </div>
+            </div>
+            <div style="padding:12px 4px;">
+              <p>The planner found the following soft warnings for this drive. Each must be acknowledged.</p>
+              <ul class="warning-list" id="warning-list"><!-- populated --></ul>
+              <p class="muted">No warnings means there's nothing to acknowledge — click Next to continue.</p>
+            </div>
+          </section>
+
+          <!-- Step 4: Passphrase entry (mocked native dialog) ------------- -->
+          <section class="wizard-step" data-step="4" data-requires-ready data-ready="false">
+            <div class="wizard__banner">
+              <div class="wizard__banner-icon" style="color:var(--win-title-active-l);">🔒</div>
+              <div>
+                <h2>Set passphrase</h2>
+                <p>Choose a passphrase. The drive can also be unlocked later with the recovery key.</p>
+              </div>
+            </div>
+            <div style="padding:12px 4px;">
+              <div class="mock-banner">
+                <strong>Native dialog (mocked)</strong>
+                In production this is a native OS prompt spawned by the Rust shell:
+                <code>zenity --password</code> on Linux,
+                <code>CredUIPromptForWindowsCredentials</code> on Windows.
+                The webview never sees plaintext — see DESIGN.md §8.2.
+                This page uses fake fields purely so the visual flow can be reviewed.
+              </div>
+              <fieldset>
+                <legend>Passphrase</legend>
+                <div class="row mb-1">
+                  <label for="pass1" style="width:140px;">Enter passphrase:</label>
+                  <input id="pass1" type="password" class="grow" autocomplete="new-password">
+                </div>
+                <div class="row">
+                  <label for="pass2" style="width:140px;">Confirm passphrase:</label>
+                  <input id="pass2" type="password" class="grow" autocomplete="new-password">
+                </div>
+                <p class="muted mt-1" id="pass-hint">Enter at least 8 characters; both fields must match.</p>
+              </fieldset>
+            </div>
+          </section>
+
+          <!-- Step 5: Progress -------------------------------------------- -->
+          <section class="wizard-step" data-step="5" data-requires-ready data-ready="false">
+            <div class="wizard__banner">
+              <div class="wizard__banner-icon" style="color:var(--win-title-active-l);">⚙</div>
+              <div>
+                <h2>Encrypting</h2>
+                <p>Do not disconnect the drive or close this window.</p>
+              </div>
+            </div>
+            <div style="padding:12px 4px;">
+              <div id="progress-stage" class="progress-stage">Starting&hellip;</div>
+              <div id="progress-detail" class="progress-detail"></div>
+              <div id="progress-bar" class="progress"><div id="progress-fill" class="progress__fill"></div></div>
+              <div id="log-pane" class="log-pane" aria-live="polite"></div>
+              <p class="muted">Progress events stream from <code>denc_core::progress::ProgressEvent</code>.</p>
+            </div>
+          </section>
+
+          <!-- Step 6: Recovery key reveal --------------------------------- -->
+          <section class="wizard-step" data-step="6">
+            <div class="wizard__banner">
+              <div class="wizard__banner-icon" style="color:#008000;">🗝</div>
+              <div>
+                <h2>Recovery key</h2>
+                <p>This is your one chance to save it. We will not show it again.</p>
+              </div>
+            </div>
+            <div style="padding:12px 4px;">
+              <div class="notice notice--danger">
+                <strong>Save this now.</strong>
+                Without the PDF or your passphrase, your data is unrecoverable. There is no backdoor.
+              </div>
+              <div class="recovery-grid" id="recovery-grid"><!-- populated --></div>
+              <div class="recovery-actions">
+                <button id="btn-copy" class="btn--default">Copy to clipboard</button>
+                <button id="btn-save-pdf">Save PDF&hellip;</button>
+                <span id="copy-hint" class="muted" style="margin-left:6px;"></span>
+              </div>
+              <p class="muted mt-2">
+                Each group is a 16-bit value × 11 (BitLocker-style check digits — see <code>RecoveryKey::encode_for_display()</code> in <code>crates/core/src/recovery_key.rs</code>). 16 groups × 16 bits = exactly 256 bits.
+              </p>
+            </div>
+          </section>
+
+          <!-- Step 7: Done ------------------------------------------------ -->
+          <section class="wizard-step" data-step="7">
+            <div class="wizard__banner">
+              <div class="wizard__banner-icon" style="color:#008000;">✓</div>
+              <div>
+                <h2>Drive encrypted</h2>
+                <p>You can now unlock the drive with your passphrase or recovery key.</p>
+              </div>
+            </div>
+            <div style="padding:12px 4px;">
+              <p>The drive's layout is now:</p>
+              <dl class="kv">
+                <dt>P1 (10 MB FAT32)</dt><dd>holds <code>recovery.bin</code> (escrow)</dd>
+                <dt>P2 (rest of drive)</dt><dd>VeraCrypt AES-256-XTS, exFAT inside</dd>
+              </dl>
+              <p>To use it, return to the main window and click <strong>Unlock</strong>.</p>
+            </div>
+          </section>
+
+        </div>
+
+        <div class="wizard__footer">
+          <button id="btn-help">Help</button>
+          <span class="footer-spacer"></span>
+          <button id="btn-back">&lt; Back</button>
+          <button id="btn-next" class="btn--default">Next &gt;</button>
+          <button id="btn-cancel">Cancel</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Cancel-confirmation modal -->
+  <div class="modal-backdrop" id="modal-cancel">
+    <div class="window modal">
+      <div class="title-bar">
+        <span class="title-bar__icon" aria-hidden="true"></span>
+        <span class="title-bar__text">Cancel encryption?</span>
+        <div class="title-bar__buttons">
+          <button class="title-btn">×</button>
+        </div>
+      </div>
+      <div class="modal__body">
+        <div class="modal__icon modal__icon--warn">?</div>
+        <div class="modal__text">
+          Cancelling now will leave the drive in an inconsistent state — its old contents are gone and the new encrypted volume is incomplete. Treat the drive as destroyed.<br><br>
+          Cancel anyway?
+        </div>
+      </div>
+      <div class="modal__footer">
+        <button class="btn--default" data-modal-yes>Yes, cancel</button>
+        <button data-modal-no>Keep encrypting</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/mock-data.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/encrypt-flow.js"></script>
+  <script>
+    (function () {
+      const q = MOCK.query();
+      const drive = MOCK.findDrive(q.path) || MOCK.drives.find(d => !d.isSystem);
+
+      // ---- Step 1: drive summary + serial confirmation -----------------
+      const summary = document.getElementById("drive-summary");
+      summary.innerHTML = `
+        <dt>Path</dt><dd class="mono">${drive.path}</dd>
+        <dt>Vendor / Model</dt><dd>${drive.vendor || ""} ${drive.model || ""}</dd>
+        <dt>Size</dt><dd>${MOCK.formatSize(drive.size_bytes)}</dd>
+        <dt>Serial</dt><dd class="mono">${drive.serial}</dd>
+        <dt>Removable</dt><dd>${drive.removable ? "Yes" : "No"}</dd>
+      `;
+      document.getElementById("expected-serial").textContent = drive.serial;
+      const serialInput = document.getElementById("serial-input");
+      const serialHint = document.getElementById("serial-hint");
+      serialInput.addEventListener("input", () => {
+        const ok = serialInput.value.trim() === drive.serial;
+        Wizard.markReady(1, ok);
+        serialHint.style.color = ok ? "#008000" : "";
+      });
+
+      // ---- Step 2: shred toggle ----------------------------------------
+      const shredNotice = document.getElementById("shred-notice");
+      let shredFlag = false;
+      document.querySelectorAll("input[name=mode]").forEach(r => {
+        r.addEventListener("change", () => {
+          shredFlag = (document.querySelector("input[name=mode]:checked").value === "shred");
+          shredNotice.style.display = shredFlag ? "" : "none";
+        });
+      });
+
+      // ---- Step 3: warnings (populated when entering the step) ---------
+      function populateWarnings() {
+        const list = document.getElementById("warning-list");
+        const ws = MOCK.planWarnings(drive, shredFlag);
+        list.innerHTML = "";
+        if (ws.length === 0) {
+          Wizard.markReady(3, true);
+          return;
+        }
+        ws.forEach((text, i) => {
+          const li = document.createElement("li");
+          li.innerHTML = `<input type="checkbox" id="w${i}"><label for="w${i}">${text}</label>`;
+          list.appendChild(li);
+        });
+        const updateReady = () => {
+          const all = list.querySelectorAll("input[type=checkbox]");
+          const allChecked = Array.from(all).every(c => c.checked);
+          Wizard.markReady(3, allChecked);
+        };
+        list.querySelectorAll("input[type=checkbox]").forEach(c => c.addEventListener("change", updateReady));
+        Wizard.markReady(3, false);
+      }
+
+      // ---- Step 4: passphrase validation -------------------------------
+      const p1 = document.getElementById("pass1");
+      const p2 = document.getElementById("pass2");
+      const passHint = document.getElementById("pass-hint");
+      function checkPass() {
+        const ok = p1.value.length >= 8 && p1.value === p2.value;
+        Wizard.markReady(4, ok);
+        if (p1.value.length < 8) {
+          passHint.textContent = "Enter at least 8 characters; both fields must match.";
+        } else if (p1.value !== p2.value) {
+          passHint.textContent = "Confirmation does not match.";
+          passHint.style.color = "#a00000";
+        } else {
+          passHint.textContent = "Passphrase set.";
+          passHint.style.color = "#008000";
+        }
+      }
+      p1.addEventListener("input", checkPass);
+      p2.addEventListener("input", checkPass);
+
+      // ---- Step 6: render the recovery key grid ------------------------
+      const grid = document.getElementById("recovery-grid");
+      MOCK.recoveryKeyForDisplay().forEach(row => {
+        row.forEach(g => {
+          const cell = document.createElement("div");
+          cell.className = "recovery-grid__group";
+          cell.textContent = g;
+          grid.appendChild(cell);
+        });
+      });
+      document.getElementById("btn-copy").addEventListener("click", () => {
+        const txt = MOCK.recoveryKeyCanonical();
+        const hint = document.getElementById("copy-hint");
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(txt).then(
+            () => { hint.textContent = "Copied."; hint.style.color = "#008000"; },
+            () => { hint.textContent = "Copy failed."; hint.style.color = "#a00000"; }
+          );
+        } else {
+          hint.textContent = "Clipboard API unavailable in this browser.";
+        }
+      });
+      document.getElementById("btn-save-pdf").addEventListener("click", () => {
+        alert("[Mock] In production, calls denc_core::pdf::export_recovery_pdf().");
+      });
+
+      // ---- Wizard wiring ----------------------------------------------
+      Wizard.init({
+        total: 7,
+        onAdvance: (from, to) => {
+          if (to === 3) populateWarnings();
+          if (to === 5) EncryptFlow.start(shredFlag);
+          if (to === 6) Wizard.markReady(5, true); // unlock Next on the (now skipped) progress page
+        },
+        onCancel: () => {
+          // When in progress, also abort the timed playback.
+          EncryptFlow.abort("User cancelled");
+          window.location.href = "index.html";
+        },
+        onFinish: () => { window.location.href = "index.html"; },
+      });
+    })();
+  </script>
+</body>
+</html>

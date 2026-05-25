@@ -1,1 +1,1 @@
-{}
+{"default":{"identifier":"default","description":"Default permissions for the main DriveEncryptor window. Allows the core IPC + event listen/emit/unlisten APIs the wizard needs. Custom app commands (list_drives, plan_encrypt, commit_passphrase, commit_recovery_key, request_passphrase, start_encrypt, start_unlock, dismount, pick_folder, save_recovery_pdf, cancel) are registered via tauri::generate_handler! and are auto-allowed.","local":true,"windows":["main"],"permissions":["core:default"]}}

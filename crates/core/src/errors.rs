@@ -16,7 +16,9 @@ pub enum Error {
     #[error("kdf failed: {0}")]
     Kdf(String),
 
-    #[error("aead authentication failed (wrong passphrase or recovery key, or corrupted recovery.bin)")]
+    #[error(
+        "aead authentication failed (wrong passphrase or recovery key, or corrupted recovery.bin)"
+    )]
     AeadAuth,
 
     #[error("veracrypt: {0}")]

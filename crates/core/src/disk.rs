@@ -19,7 +19,12 @@ const MOUNT_CANDIDATES: &[&str] = &["/usr/bin/mount", "/bin/mount", "mount"];
 const UMOUNT_CANDIDATES: &[&str] = &["/usr/bin/umount", "/bin/umount", "umount"];
 const PARTPROBE_CANDIDATES: &[&str] = &["/usr/sbin/partprobe", "/sbin/partprobe", "partprobe"];
 const BLOCKDEV_CANDIDATES: &[&str] = &["/usr/sbin/blockdev", "/sbin/blockdev", "blockdev"];
-const UDEVADM_CANDIDATES: &[&str] = &["/usr/bin/udevadm", "/bin/udevadm", "/sbin/udevadm", "udevadm"];
+const UDEVADM_CANDIDATES: &[&str] = &[
+    "/usr/bin/udevadm",
+    "/bin/udevadm",
+    "/sbin/udevadm",
+    "udevadm",
+];
 
 fn find(candidates: &[&str]) -> Result<PathBuf> {
     for c in candidates {
@@ -76,16 +81,12 @@ pub fn write_gpt_two_partitions(device: &Path, p1_size_bytes: u64) -> Result<()>
         .ok_or_else(|| Error::InvalidInput("device path is not valid UTF-8".into()))?;
     let p1_size_mib = p1_size_bytes / (1024 * 1024);
     if p1_size_mib < 1 {
-        return Err(Error::InvalidInput(
-            "P1 size must be at least 1 MiB".into(),
-        ));
+        return Err(Error::InvalidInput("P1 size must be at least 1 MiB".into()));
     }
     // --zap-all wipes any existing partition table + GPT backups.
-    run(
-        &sgdisk,
-        &["--zap-all", device_str],
-        |s| Error::DriveEnum(format!("sgdisk zap: {}", s)),
-    )?;
+    run(&sgdisk, &["--zap-all", device_str], |s| {
+        Error::DriveEnum(format!("sgdisk zap: {}", s))
+    })?;
     // Two partitions: P1 = p1_size_mib MiB, P2 = rest.
     let p1_arg = format!("1:0:+{}M", p1_size_mib);
     let p1_type = "1:EBD0A0A2-B9E5-4433-87C0-68B6B72699C7";
@@ -96,8 +97,18 @@ pub fn write_gpt_two_partitions(device: &Path, p1_size_bytes: u64) -> Result<()>
     run(
         &sgdisk,
         &[
-            "--new", &p1_arg, "--typecode", p1_type, "--change-name", p1_label,
-            "--new", p2_arg, "--typecode", p2_type, "--change-name", p2_label,
+            "--new",
+            &p1_arg,
+            "--typecode",
+            p1_type,
+            "--change-name",
+            p1_label,
+            "--new",
+            p2_arg,
+            "--typecode",
+            p2_type,
+            "--change-name",
+            p2_label,
             device_str,
         ],
         |s| Error::DriveEnum(format!("sgdisk new: {}", s)),
@@ -197,10 +208,7 @@ pub fn mkfs_fat32(partition: &Path) -> Result<()> {
 /// the partition is named with a "p" separator. Otherwise (sda, sdb), it's
 /// just the digit appended.
 pub fn partition_path(disk: &Path, n: u32) -> PathBuf {
-    let name = disk
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
+    let name = disk.file_name().and_then(|s| s.to_str()).unwrap_or("");
     let parent = disk.parent().unwrap_or_else(|| Path::new("/dev"));
     let suffix = if name
         .chars()
@@ -220,11 +228,9 @@ pub fn mount_ro(partition: &Path, mountpoint: &Path) -> Result<()> {
     let mount = find(MOUNT_CANDIDATES)?;
     let part_str = partition.to_string_lossy();
     let mp_str = mountpoint.to_string_lossy();
-    run(
-        &mount,
-        &["-o", "ro,noauto", &part_str, &mp_str],
-        |s| Error::DriveEnum(format!("mount ro: {}", s)),
-    )
+    run(&mount, &["-o", "ro,noauto", &part_str, &mp_str], |s| {
+        Error::DriveEnum(format!("mount ro: {}", s))
+    })
 }
 
 pub fn mount_rw(partition: &Path, mountpoint: &Path) -> Result<()> {
@@ -232,11 +238,9 @@ pub fn mount_rw(partition: &Path, mountpoint: &Path) -> Result<()> {
     let mount = find(MOUNT_CANDIDATES)?;
     let part_str = partition.to_string_lossy();
     let mp_str = mountpoint.to_string_lossy();
-    run(
-        &mount,
-        &["-o", "rw,noauto", &part_str, &mp_str],
-        |s| Error::DriveEnum(format!("mount rw: {}", s)),
-    )
+    run(&mount, &["-o", "rw,noauto", &part_str, &mp_str], |s| {
+        Error::DriveEnum(format!("mount rw: {}", s))
+    })
 }
 
 /// Poll until `path` exists as a block device. Used to bridge the gap between
@@ -266,6 +270,72 @@ pub fn umount(mountpoint: &Path) -> Result<()> {
     run(&umount, &[&mp_str], |s| {
         Error::DriveEnum(format!("umount: {}", s))
     })
+}
+
+/// Unmount every mount whose source is `device` itself or one of its
+/// partitions (`/dev/sda`, `/dev/sda1`, `/dev/sda2`, …). Used before
+/// destructive operations to prevent
+///
+///   1. shred/sgdisk from corrupting an in-use filesystem, and
+///   2. mkfs.fat from refusing because udisks2 auto-mounted the new
+///      partition between `sgdisk` writing the GPT and our `mkfs.fat`.
+///
+/// Tries a normal `umount` first; falls back to `umount -l` (lazy) when
+/// the device is busy. udisks2 may re-auto-mount after we return — call
+/// this again right before each step that expects an unmounted device.
+pub fn unmount_drive_partitions(device: &Path) -> Result<()> {
+    let umount = find(UMOUNT_CANDIDATES)?;
+    let dev_str = device.to_string_lossy().into_owned();
+    let mounts = std::fs::read_to_string("/proc/mounts")?;
+    for line in mounts.lines() {
+        let mut iter = line.split_whitespace();
+        let src = iter.next().unwrap_or("");
+        let dst = iter.next().unwrap_or("");
+        if src.is_empty() || dst.is_empty() {
+            continue;
+        }
+        // Match the device itself or a partition node: /dev/sda OR /dev/sda1.
+        // For p-suffix devices (loop0p1, nvme0n1p2) the prefix match still
+        // works because the partition path starts with the disk path.
+        if src != dev_str && !src.starts_with(&format!("{}p", dev_str)) {
+            let suffix = src.strip_prefix(&dev_str).unwrap_or("");
+            if !suffix.chars().all(|c| c.is_ascii_digit()) || suffix.is_empty() {
+                continue;
+            }
+        }
+        tracing::info!(src, dst, "unmounting drive partition before destructive op");
+        let out = Command::new(&umount)
+            .arg(dst)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()?;
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            tracing::warn!(stderr = %stderr.trim(), "umount failed; falling back to umount -l");
+            let lazy = Command::new(&umount)
+                .arg("-l")
+                .arg(dst)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()?;
+            if !lazy.status.success() {
+                return Err(Error::DriveEnum(format!(
+                    "umount {} (and umount -l) both failed: {}",
+                    dst,
+                    String::from_utf8_lossy(&lazy.stderr).trim()
+                )));
+            }
+        }
+    }
+    // Drain udev events so udisks2 sees the unmount before any subsequent op.
+    if let Ok(udevadm) = find(UDEVADM_CANDIDATES) {
+        let _ = run(&udevadm, &["settle", "--timeout=5"], |s| {
+            Error::DriveEnum(format!("udevadm settle: {}", s))
+        });
+    }
+    Ok(())
 }
 
 /// Overwrite `device` with cryptographically random bytes, end-to-end. Used
@@ -317,8 +387,14 @@ mod tests {
 
     #[test]
     fn partition_path_simple_disk() {
-        assert_eq!(partition_path(Path::new("/dev/sda"), 1), PathBuf::from("/dev/sda1"));
-        assert_eq!(partition_path(Path::new("/dev/sdb"), 2), PathBuf::from("/dev/sdb2"));
+        assert_eq!(
+            partition_path(Path::new("/dev/sda"), 1),
+            PathBuf::from("/dev/sda1")
+        );
+        assert_eq!(
+            partition_path(Path::new("/dev/sdb"), 2),
+            PathBuf::from("/dev/sdb2")
+        );
     }
 
     #[test]

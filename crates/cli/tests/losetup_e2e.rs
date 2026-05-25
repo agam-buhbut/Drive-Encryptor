@@ -177,7 +177,8 @@ fn full_pipeline_loopback() {
     eprintln!("veracrypt: {}", veracrypt.binary_path().display());
 
     let passphrase = SecretBytes::from(TEST_PASSPHRASE);
-    let out = operations::encrypt_format(&plan, &passphrase, &veracrypt, &denc_core::NoopSink).unwrap();
+    let out =
+        operations::encrypt_format(&plan, &passphrase, &veracrypt, &denc_core::NoopSink).unwrap();
     let recovery_encoded = out.recovery_key.encode();
     eprintln!("recovery key: {}", recovery_encoded);
     drop(out);
@@ -225,7 +226,8 @@ fn cross_tool_unwrap_then_stock_veracrypt() {
     let plan = planner::format_and_encrypt(&drive, false).unwrap();
     let veracrypt = VeraCryptDriver::detect().unwrap();
     let passphrase = SecretBytes::from(TEST_PASSPHRASE);
-    let _out = operations::encrypt_format(&plan, &passphrase, &veracrypt, &denc_core::NoopSink).unwrap();
+    let _out =
+        operations::encrypt_format(&plan, &passphrase, &veracrypt, &denc_core::NoopSink).unwrap();
     ensure_loop_attached(&loop_dev, &img_path);
 
     // Read recovery.bin off P1 the same way a power user would.

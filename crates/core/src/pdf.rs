@@ -28,12 +28,8 @@ pub fn export_recovery_pdf(
     created_at: SystemTime,
 ) -> Result<()> {
     // A4: 210 x 297 mm.
-    let (doc, page, layer) = PdfDocument::new(
-        "DriveEncryptor Recovery Key",
-        Mm(210.0),
-        Mm(297.0),
-        "main",
-    );
+    let (doc, page, layer) =
+        PdfDocument::new("DriveEncryptor Recovery Key", Mm(210.0), Mm(297.0), "main");
     let layer = doc.get_page(page).get_layer(layer);
 
     let title_font = doc
@@ -120,7 +116,10 @@ pub fn export_recovery_pdf(
 
 fn format_iso8601(t: SystemTime) -> String {
     // Very small ISO-8601 formatter (no chrono dep). Honours UTC.
-    let secs = t.duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let secs = t
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     let (y, mo, d, h, mi, s) = unix_to_ymdhms(secs as i64);
     format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}Z", y, mo, d, h, mi, s)
 }
@@ -161,10 +160,7 @@ mod tests {
         // 2024-01-01 00:00:00 UTC
         assert_eq!(unix_to_ymdhms(1_704_067_200), (2024, 1, 1, 0, 0, 0));
         // 2024-12-31 23:59:59 UTC = 1735689599
-        assert_eq!(
-            unix_to_ymdhms(1_735_689_599),
-            (2024, 12, 31, 23, 59, 59)
-        );
+        assert_eq!(unix_to_ymdhms(1_735_689_599), (2024, 12, 31, 23, 59, 59));
         // 2000-02-29 (leap day in century year — common bug)
         // 2000-02-29 12:00:00 UTC = 951825600
         assert_eq!(unix_to_ymdhms(951_825_600), (2000, 2, 29, 12, 0, 0));
@@ -179,8 +175,16 @@ mod tests {
         export_recovery_pdf(&path, &key, "test-drive", created).unwrap();
         let bytes = std::fs::read(&path).unwrap();
         // Valid PDFs start with "%PDF-".
-        assert!(bytes.starts_with(b"%PDF-"), "not a PDF: starts with {:?}", &bytes[..8]);
+        assert!(
+            bytes.starts_with(b"%PDF-"),
+            "not a PDF: starts with {:?}",
+            &bytes[..8]
+        );
         // Should not be tiny.
-        assert!(bytes.len() > 500, "PDF suspiciously small: {} bytes", bytes.len());
+        assert!(
+            bytes.len() > 500,
+            "PDF suspiciously small: {} bytes",
+            bytes.len()
+        );
     }
 }

@@ -30,13 +30,7 @@ pub async fn prompt_passphrase(label: &str) -> Result<Option<SecretBytes>> {
 
 async fn zenity(path: &Path, label: &str) -> Result<Option<SecretBytes>> {
     let out = Command::new(path)
-        .args([
-            "--password",
-            "--title",
-            "DriveEncryptor",
-            "--text",
-            label,
-        ])
+        .args(["--password", "--title", "DriveEncryptor", "--text", label])
         .output()
         .await
         .context("spawning zenity")?;

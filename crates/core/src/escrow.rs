@@ -113,7 +113,10 @@ impl Argon2Params {
             return Self::default_v01();
         }
         if measured >= target_ms {
-            tracing::debug!(measured_ms = measured, "argon2 floor already ≥ target; using floor params");
+            tracing::debug!(
+                measured_ms = measured,
+                "argon2 floor already ≥ target; using floor params"
+            );
             return floor;
         }
         let scaled = (2.0 * target_ms as f64 / measured as f64).round() as i64;
@@ -560,7 +563,9 @@ mod tests {
         let f = fixture_file();
         let bytes = f.serialize();
         let parsed = RecoveryFile::parse(&bytes).unwrap();
-        let master = parsed.unwrap_with_passphrase(&fixture_passphrase()).unwrap();
+        let master = parsed
+            .unwrap_with_passphrase(&fixture_passphrase())
+            .unwrap();
         assert_eq!(master.as_bytes(), fixture_master().as_bytes());
     }
 
@@ -697,7 +702,9 @@ mod tests {
         .unwrap();
         let parsed = RecoveryFile::parse(&f.serialize()).unwrap();
         assert_eq!(parsed.argon2, custom);
-        let master = parsed.unwrap_with_passphrase(&fixture_passphrase()).unwrap();
+        let master = parsed
+            .unwrap_with_passphrase(&fixture_passphrase())
+            .unwrap();
         assert_eq!(master.as_bytes(), fixture_master().as_bytes());
     }
 
@@ -772,7 +779,9 @@ mod tests {
         let parsed = RecoveryFile::parse(&bytes).unwrap();
         let reserialized = parsed.serialize();
         assert_eq!(reserialized, bytes);
-        let master_via_pass = parsed.unwrap_with_passphrase(&fixture_passphrase()).unwrap();
+        let master_via_pass = parsed
+            .unwrap_with_passphrase(&fixture_passphrase())
+            .unwrap();
         let master_via_recov = parsed
             .unwrap_with_recovery_key(&fixture_recovery_key())
             .unwrap();
@@ -782,8 +791,8 @@ mod tests {
         // Pinned byte fixture. Generated once with `fixture_v1_print` and
         // committed. Any change here means the wire format drifted.
         let fixture_hex_v1 = include_str!("../../../tests/fixtures/recovery_v1.bin.hex");
-        let pinned = hex::decode(fixture_hex_v1.trim().replace(['\n', ' '], ""))
-            .expect("fixture hex parse");
+        let pinned =
+            hex::decode(fixture_hex_v1.trim().replace(['\n', ' '], "")).expect("fixture hex parse");
         assert_eq!(
             bytes, pinned,
             "WIRE FORMAT DRIFT: serialize() output no longer matches the pinned v1 fixture. \

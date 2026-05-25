@@ -8,9 +8,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use denc_core::{
-    drive_linux, operations, pdf, planner, RecoveryKey, SecretBytes, VeraCryptDriver,
-};
+use denc_core::{drive_linux, operations, pdf, planner, RecoveryKey, SecretBytes, VeraCryptDriver};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
@@ -141,10 +139,7 @@ pub fn commit_passphrase(passphrase: String, state: State<'_, AppState>) -> Resu
 /// Decode and validate a webview-typed recovery key, then store it as a
 /// single-use token. Returns the token id.
 #[tauri::command]
-pub fn commit_recovery_key(
-    encoded: String,
-    state: State<'_, AppState>,
-) -> Result<String, String> {
+pub fn commit_recovery_key(encoded: String, state: State<'_, AppState>) -> Result<String, String> {
     let key = RecoveryKey::decode(&encoded).map_err(|e| e.to_string())?;
     let bytes = SecretBytes::new(key.as_bytes().to_vec());
     state

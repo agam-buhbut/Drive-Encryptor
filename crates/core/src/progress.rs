@@ -34,7 +34,10 @@ pub enum ProgressEvent {
     /// progress hook, so this is emitted as a single before/after pair with
     /// `bytes_total = 0` meaning "indeterminate." The GUI shows a spinner
     /// during this window.
-    VolumeCreating { bytes_written: u64, bytes_total: u64 },
+    VolumeCreating {
+        bytes_written: u64,
+        bytes_total: u64,
+    },
     /// All on-disk artifacts verified.
     Verified,
     /// Operation succeeded. `recovery_key_pdf` is `Some` only after the

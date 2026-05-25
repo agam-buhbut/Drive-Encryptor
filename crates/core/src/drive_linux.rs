@@ -205,9 +205,9 @@ fn is_candidate_name(name: &str) -> bool {
 /// Find the drive a given path belongs to, by exact path match or by
 /// matching the drive containing a partition with that path.
 pub fn find_drive_by_path<'a>(drives: &'a [Drive], path: &Path) -> Option<&'a Drive> {
-    drives.iter().find(|d| {
-        d.path == path || d.partitions.iter().any(|p| p.path == path)
-    })
+    drives
+        .iter()
+        .find(|d| d.path == path || d.partitions.iter().any(|p| p.path == path))
 }
 
 #[cfg(test)]
@@ -308,10 +308,7 @@ mod tests {
         assert!(sdb.removable);
         assert!(!sdb.readonly);
         assert_eq!(sdb.partitions.len(), 1);
-        assert_eq!(
-            sdb.partitions[0].path,
-            PathBuf::from("/dev/sdb1")
-        );
+        assert_eq!(sdb.partitions[0].path, PathBuf::from("/dev/sdb1"));
     }
 
     #[test]

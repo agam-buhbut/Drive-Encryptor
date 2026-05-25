@@ -39,8 +39,7 @@ impl TokenStore {
     /// Caller passes the id back to JS as an opaque string.
     pub fn insert(&self, secret: SecretBytes) -> std::io::Result<String> {
         let mut buf = [0u8; 16];
-        getrandom::getrandom(&mut buf)
-            .map_err(|e| std::io::Error::other(format!("rng: {}", e)))?;
+        getrandom::getrandom(&mut buf).map_err(|e| std::io::Error::other(format!("rng: {}", e)))?;
         let id = hex::encode(buf);
         let mut g = self.inner.lock().unwrap();
         g.insert(id.clone(), (secret, Instant::now()));
@@ -160,9 +159,7 @@ mod tests {
     fn store_is_cloneable_thread_safe() {
         let s = TokenStore::new();
         let s2 = s.clone();
-        let handle = thread::spawn(move || {
-            s2.insert(SecretBytes::from("threaded")).unwrap()
-        });
+        let handle = thread::spawn(move || s2.insert(SecretBytes::from("threaded")).unwrap());
         let id = handle.join().unwrap();
         let got = s.take(&id).unwrap();
         assert_eq!(got.as_bytes(), b"threaded");

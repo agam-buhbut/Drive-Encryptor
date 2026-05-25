@@ -5,9 +5,8 @@ use std::process::ExitCode;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use denc_core::{
-    drive_linux, operations, pdf, planner,
-    veracrypt::VeraCryptDriver,
-    RecoveryKey, SecretBytes, TracingSink,
+    drive_linux, operations, pdf, planner, veracrypt::VeraCryptDriver, RecoveryKey, SecretBytes,
+    TracingSink,
 };
 
 #[derive(Parser)]
@@ -76,8 +75,7 @@ fn main() -> ExitCode {
 
 fn install_tracing() {
     use tracing_subscriber::EnvFilter;
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
@@ -215,7 +213,9 @@ fn cmd_encrypt(
         if plan.pre_shred {
             println!("It will first overwrite the entire drive with random bytes (slow on large drives), then encrypt.");
         }
-        println!("If you want to keep the drive's current contents, abort now and back them up first.");
+        println!(
+            "If you want to keep the drive's current contents, abort now and back them up first."
+        );
         println!("To confirm, type exactly: {}", confirm_token);
         print!("> ");
         use std::io::Write;
@@ -322,8 +322,7 @@ fn cmd_unlock(
         } else {
             read_secret_tty("Recovery key")?
         };
-        let s = std::str::from_utf8(raw.as_bytes())
-            .context("recovery key must be valid utf-8")?;
+        let s = std::str::from_utf8(raw.as_bytes()).context("recovery key must be valid utf-8")?;
         let key = RecoveryKey::decode(s).map_err(|e| anyhow::anyhow!("{}", e))?;
         operations::unlock_with_recovery_key(&drive, &key, mountpoint, &veracrypt)?;
     } else {

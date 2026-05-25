@@ -48,9 +48,7 @@ pub enum EncryptionMode {
 /// back them up themselves before running this.
 pub fn format_and_encrypt(drive: &Drive, shred: bool) -> Result<EncryptionPlan> {
     if drive.is_system_drive() {
-        return Err(Error::SystemDriveRefused(
-            drive.path.display().to_string(),
-        ));
+        return Err(Error::SystemDriveRefused(drive.path.display().to_string()));
     }
     if drive.readonly {
         return Err(Error::PlanRefused(format!(

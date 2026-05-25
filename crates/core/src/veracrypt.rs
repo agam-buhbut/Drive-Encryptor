@@ -120,12 +120,7 @@ impl VeraCryptDriver {
         Ok(())
     }
 
-    pub fn mount(
-        &self,
-        device: &Path,
-        keyfile: &MasterKeyfile,
-        mountpoint: &Path,
-    ) -> Result<()> {
+    pub fn mount(&self, device: &Path, keyfile: &MasterKeyfile, mountpoint: &Path) -> Result<()> {
         let out = Command::new(&self.binary)
             .arg("--text")
             .arg("--non-interactive")

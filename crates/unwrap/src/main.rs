@@ -76,8 +76,7 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
 
-    let bytes = std::fs::read(&cli.file)
-        .with_context(|| format!("read {}", cli.file.display()))?;
+    let bytes = std::fs::read(&cli.file).with_context(|| format!("read {}", cli.file.display()))?;
     let header = parse_header(&bytes)?;
 
     let secret_raw: Zeroizing<Vec<u8>> = if cli.secret_stdin {
@@ -141,9 +140,7 @@ fn run() -> Result<()> {
     let master = cipher
         .decrypt(Nonce::from_slice(nonce), combined.as_slice())
         .map_err(|_| {
-            anyhow::anyhow!(
-                "aead authentication failed (wrong secret, or recovery.bin corrupted)"
-            )
+            anyhow::anyhow!("aead authentication failed (wrong secret, or recovery.bin corrupted)")
         })?;
     if master.len() != MASTER_LEN {
         bail!(
@@ -227,8 +224,8 @@ fn parse_header(input: &[u8]) -> Result<Header> {
     let mut h = Sha256::new();
     h.update(HMAC_KDS_INPUT);
     let hmac_key: [u8; 32] = h.finalize().into();
-    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&hmac_key)
-        .expect("hmac-sha256 takes any key length");
+    let mut mac =
+        <Hmac<Sha256> as Mac>::new_from_slice(&hmac_key).expect("hmac-sha256 takes any key length");
     mac.update(&input[..HEADER_LEN - HMAC_LEN]);
     let expected = mac.finalize().into_bytes();
     let actual = &input[HEADER_LEN - HMAC_LEN..HEADER_LEN];
@@ -302,9 +299,7 @@ fn prompt_secret(prompt: &str) -> Result<Vec<u8>> {
 
 fn read_stdin_line() -> Result<Vec<u8>> {
     let mut buf = String::new();
-    std::io::stdin()
-        .read_line(&mut buf)
-        .context("read stdin")?;
+    std::io::stdin().read_line(&mut buf).context("read stdin")?;
     while matches!(buf.chars().last(), Some('\n') | Some('\r')) {
         buf.pop();
     }

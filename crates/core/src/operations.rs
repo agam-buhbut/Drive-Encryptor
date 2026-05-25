@@ -74,6 +74,12 @@ pub fn encrypt_format(
     )?;
     let recovery_bytes = recovery_file.serialize();
 
+    // Unmount any partitions of this drive that the desktop (udisks2) or a
+    // user has mounted. The planner only warns; the operation must follow
+    // through, or `mkfs.fat` after `sgdisk` will refuse because the old
+    // mount entry survives the partition-table rewrite.
+    disk::unmount_drive_partitions(&plan.drive)?;
+
     if plan.pre_shred {
         tracing::info!(drive = %plan.drive.display(), "shredding drive with CSPRNG bytes (this can take a while)");
         // Throttle PreShredding events: at most one every 100 ms regardless
@@ -120,6 +126,11 @@ pub fn encrypt_format(
 
     disk::wait_for_block_device(&p1, std::time::Duration::from_secs(5))?;
     disk::wait_for_block_device(&p2, std::time::Duration::from_secs(5))?;
+
+    // udisks2 may have auto-mounted the new partitions as soon as the kernel
+    // surfaced them. Drop any such mount before mkfs.fat, which refuses on
+    // an in-use device.
+    disk::unmount_drive_partitions(&plan.drive)?;
 
     disk::mkfs_fat32(&p1)?;
     sink.emit(ProgressEvent::P1Formatted);

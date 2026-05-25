@@ -1,0 +1,26 @@
+[package]
+name = "drive-encryptor-unwrap"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# This crate intentionally does NOT depend on `drive-encryptor-core`.
+# It is the published spec reference for the recovery.bin format —
+# any drive must be recoverable using ONLY this binary + stock VeraCrypt.
+# An independent reimplementation is itself the spec compliance test.
+
+[[bin]]
+name = "denc-unwrap"
+path = "src/main.rs"
+
+[dependencies]
+zeroize.workspace = true
+argon2.workspace = true
+aes-gcm.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+rpassword.workspace = true
+hex.workspace = true

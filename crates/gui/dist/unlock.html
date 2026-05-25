@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Unlock Drive Wizard — DriveEncryptor</title>
+  <link rel="stylesheet" href="css/win9x.css">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div class="desktop">
+    <div class="window wizard-window">
+
+      <div class="title-bar">
+        <span class="title-bar__icon" aria-hidden="true"></span>
+        <span class="title-bar__text">Unlock Drive Wizard</span>
+        <div class="title-bar__buttons">
+          <button class="title-btn" aria-label="Minimize">_</button>
+          <button class="title-btn" aria-label="Close">×</button>
+        </div>
+      </div>
+
+      <div class="wizard">
+
+        <div class="wizard__body">
+
+          <!-- Step 1: Confirm drive --------------------------------------- -->
+          <section class="wizard-step active" data-step="1">
+            <div class="wizard__banner">
+              <div class="wizard__banner-icon" style="color:var(--win-title-active-l);">🔓</div>
+              <div>
+                <h2>Unlock encrypted drive</h2>
+                <p>Confirm the drive and choose how to unlock it.</p>
+              </div>
+            </div>
+            <div style="padding:12px 4px;">
+              <p>The wizard will read <code>recovery.bin</code> from the drive's escrow partition (P1, FAT32) and use your secret to derive the VeraCrypt master keyfile.</p>
+              <dl class="kv" id="drive-summary"></dl>
+            </div>
+          </section>
+
+          <!-- Step 2: Choose unlock method -------------------------------- -->
+          <section class="wizard-step" data-step="2">
+            <div class="wizard__banner">
+              <div class="wizard__banner-icon" style="color:var(--win-title-active-l);">?</div>
+              <div>
+                <h2>Choose unlock method</h2>
+                <p>Both methods recover the same VeraCrypt master keyfile.</p>
+              </div>
+            </div>
+            <div style="padding:12px 4px;">
+              <fieldset>
+                <legend>Method</legend>
+                <label class="row mb-1"><input type="radio" name="method" value="passphrase" checked data-autofocus> Passphrase — what you set when the drive was encrypted.</label>
+                <label class="row"><input type="radio" name="method" value="recovery"> Recovery key — the 96-digit key from the printed PDF.</label>
+              </fieldset>
+            </div>
+          </section>
+
+          <!-- Step 3: Enter secret + mountpoint --------------------------- -->
+          <section class="wizard-step" data-step="3" data-requires-ready data-ready="false">
+            <div class="wizard__banner">
+              <div class="wizard__banner-icon" style="color:var(--win-title-active-l);">🔑</div>
+              <div>
+                <h2 id="enter-title">Enter secret</h2>
+                <p>Then choose a mountpoint.</p>
+              </div>
+            </div>
+            <div style="padding:12px 4px;">
+              <div class="mock-banner">
+                <strong>Native dialog (mocked)</strong>
+                In production, secret entry is delegated to the OS — <code>zenity --password</code> on Linux,
+                <code>CredUIPromptForWindowsCredentials</code> on Windows. The webview never sees plaintext (DESIGN.md §8.2).
+                The fields below are visual mocks only.
+              </div>
+
+              <fieldset id="pass-fieldset">
+                <legend>Passphrase</legend>
+                <div class="row">
+                  <label for="pass" style="width:140px;">Passphrase:</label>
+                  <input id="pass" type="password" class="grow" autocomplete="current-password">
+                </div>
+              </fieldset>
+
+              <fieldset id="recov-fieldset" style="display:none;">
+                <legend>Recovery key</legend>
+                <p class="muted">Type or paste the 96-digit key. Dashes, spaces, and dots are accepted (parser is liberal — see <code>RecoveryKey::decode()</code>).</p>
+                <textarea id="recov" rows="3" style="width:100%;" autocomplete="off" spellcheck="false" placeholder="050908-090794-133100-200618-…"></textarea>
+                <p class="muted mt-1" id="recov-hint">96 digits expected; each 6-digit group must be divisible by 11.</p>
+              </fieldset>
+
+              <fieldset>
+                <legend>Mountpoint</legend>
+                <div class="row">
+                  <label for="mountpoint" style="width:140px;">Mount at:</label>
+                  <input id="mountpoint" type="text" class="grow">
+                  <button id="btn-browse">Browse&hellip;</button>
+                </div>
+              </fieldset>
+            </div>
+          </section>
+
+          <!-- Step 4: Mounting -------------------------------------------- -->
+          <section class="wizard-step" data-step="4" data-requires-ready data-ready="false">
+            <div class="wizard__banner">
+              <div class="wizard__banner-icon" style="color:var(--win-title-active-l);">⚙</div>
+              <div>
+                <h2>Unlocking</h2>
+                <p>Deriving key and asking VeraCrypt to mount the volume.</p>
+              </div>
+            </div>
+            <div style="padding:12px 4px;">
+              <div id="unlock-stage" class="progress-stage">Reading recovery.bin&hellip;</div>
+              <div class="progress progress--indeterminate"><div class="progress__fill"></div></div>
+              <p class="muted mt-2">VeraCrypt's <code>--mount</code> doesn't expose progress — see <code>crates/core/src/progress.rs</code>.</p>
+            </div>
+          </section>
+
+          <!-- Step 5: Result ---------------------------------------------- -->
+          <section class="wizard-step" data-step="5">
+            <div class="wizard__banner">
+              <div class="wizard__banner-icon" id="result-icon" style="color:#008000;">✓</div>
+              <div>
+                <h2 id="result-title">Mounted</h2>
+                <p id="result-sub">Your data is now accessible.</p>
+              </div>
+            </div>
+            <div style="padding:12px 4px;" id="result-body">
+              <!-- populated based on success/failure -->
+            </div>
+          </section>
+
+        </div>
+
+        <div class="wizard__footer">
+          <button id="btn-help">Help</button>
+          <span class="footer-spacer"></span>
+          <button id="btn-back">&lt; Back</button>
+          <button id="btn-next" class="btn--default">Next &gt;</button>
+          <button id="btn-cancel">Cancel</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Cancel-confirmation modal -->
+  <div class="modal-backdrop" id="modal-cancel">
+    <div class="window modal">
+      <div class="title-bar">
+        <span class="title-bar__icon" aria-hidden="true"></span>
+        <span class="title-bar__text">Cancel?</span>
+        <div class="title-bar__buttons">
+          <button class="title-btn">×</button>
+        </div>
+      </div>
+      <div class="modal__body">
+        <div class="modal__icon modal__icon--question">?</div>
+        <div class="modal__text">
+          Cancel and return to the drive list? The drive will not be mounted.
+        </div>
+      </div>
+      <div class="modal__footer">
+        <button class="btn--default" data-modal-yes>Yes</button>
+        <button data-modal-no>No</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/mock-data.js"></script>
+  <script src="js/nav.js"></script>
+  <script>
+    (async function () {
+      const q = MOCK.query();
+      await MOCK.loadDrives();
+      const drive = MOCK.findDrive(q.path) || MOCK.drives.find(d => !d.isSystem);
+      if (!drive) {
+        alert("No suitable drive found. Returning to drive list.");
+        window.location.href = "index.html";
+        return;
+      }
+      const serialDisplay = drive.serial && drive.serial.length > 0 ? drive.serial : "(no serial)";
+
+      // ---- Step 1: drive summary ---------------------------------------
+      document.getElementById("drive-summary").innerHTML = `
+        <dt>Path</dt><dd class="mono">${drive.path}</dd>
+        <dt>Vendor / Model</dt><dd>${drive.vendor || ""} ${drive.model || ""}</dd>
+        <dt>Size</dt><dd>${MOCK.formatSize(drive.size_bytes)}</dd>
+        <dt>Serial</dt><dd class="mono">${serialDisplay}</dd>
+      `;
+
+      // ---- Step 2: method choice ---------------------------------------
+      let method = "passphrase";
+      document.querySelectorAll("input[name=method]").forEach(r => {
+        r.addEventListener("change", () => {
+          method = document.querySelector("input[name=method]:checked").value;
+          document.getElementById("pass-fieldset").style.display  = method === "passphrase" ? "" : "none";
+          document.getElementById("recov-fieldset").style.display = method === "recovery"   ? "" : "none";
+          document.getElementById("enter-title").textContent =
+            method === "passphrase" ? "Enter passphrase" : "Enter recovery key";
+          validateStep3();
+        });
+      });
+
+      // ---- Step 3: validate inputs -------------------------------------
+      const pass = document.getElementById("pass");
+      const recov = document.getElementById("recov");
+      const recovHint = document.getElementById("recov-hint");
+      const mp = document.getElementById("mountpoint");
+      mp.value = `/mnt/${drive.path.replace(/^\/dev\//, "")}`;
+
+      function validateStep3() {
+        let secretOk = false;
+        if (method === "passphrase") {
+          secretOk = pass.value.length >= 1;
+        } else {
+          const parsed = MOCK.parseRecoveryKey(recov.value);
+          secretOk = parsed !== null;
+          if (recov.value.length === 0) {
+            recovHint.textContent = "96 digits expected; each 6-digit group must be divisible by 11.";
+            recovHint.style.color = "";
+          } else if (parsed) {
+            recovHint.textContent = "Format OK — 16 groups, all check digits valid.";
+            recovHint.style.color = "#008000";
+          } else {
+            recovHint.textContent = "Format invalid — check the digits and try again.";
+            recovHint.style.color = "#a00000";
+          }
+        }
+        const mpOk = mp.value.trim().length > 0;
+        Wizard.markReady(3, secretOk && mpOk);
+      }
+      pass.addEventListener("input", validateStep3);
+      recov.addEventListener("input", validateStep3);
+      mp.addEventListener("input", validateStep3);
+
+      document.getElementById("btn-browse").addEventListener("click", async () => {
+        try {
+          const path = await MOCK.pickFolder();
+          if (path) {
+            mp.value = path;
+            validateStep3();
+          }
+        } catch (e) {
+          alert("Folder picker failed: " + e);
+        }
+      });
+
+      // ---- Step 4 → Step 5: real mount via backend ---------------------
+      async function runMount() {
+        const stage = document.getElementById("unlock-stage");
+        try {
+          stage.textContent = "Capturing secret…";
+          let token, kind;
+          if (method === "passphrase") {
+            token = await MOCK.commitPassphrase(pass.value);
+            pass.value = "";
+            kind = "passphrase";
+          } else {
+            token = await MOCK.commitRecoveryKey(recov.value);
+            recov.value = "";
+            kind = "recovery_key";
+          }
+          stage.textContent = "Reading recovery.bin and deriving key…";
+          await MOCK.startUnlock({
+            drivePath: drive.path,
+            secretToken: token,
+            kind,
+            mountpoint: mp.value.trim(),
+          });
+          stage.textContent = "Mounted.";
+          finalize(true, null);
+        } catch (e) {
+          stage.textContent = "Failed.";
+          finalize(false, String(e));
+        }
+      }
+      function finalize(ok, errMsg) {
+        const body = document.getElementById("result-body");
+        const title = document.getElementById("result-title");
+        const sub = document.getElementById("result-sub");
+        const icon = document.getElementById("result-icon");
+        if (ok) {
+          icon.textContent = "✓"; icon.style.color = "#008000";
+          title.textContent = "Mounted";
+          sub.textContent = "Your data is now accessible.";
+          body.innerHTML = `
+            <p>Drive <code>${drive.path}</code> P2 mounted at <code>${mp.value.trim()}</code>.</p>
+            <div class="row mt-1">
+              <button id="btn-dismount">Lock (dismount) now</button>
+            </div>
+            <p class="muted mt-2">Or close this wizard and dismount later from the main window or CLI.</p>
+          `;
+          const btn = document.getElementById("btn-dismount");
+          if (btn) {
+            btn.addEventListener("click", async () => {
+              btn.disabled = true;
+              btn.textContent = "Dismounting…";
+              try {
+                await MOCK.dismount(mp.value.trim());
+                btn.textContent = "Dismounted.";
+              } catch (e) {
+                btn.disabled = false;
+                btn.textContent = "Lock (dismount) now";
+                alert("Dismount failed: " + e);
+              }
+            });
+          }
+        } else {
+          icon.textContent = "✗"; icon.style.color = "#a00000";
+          title.textContent = "Unlock failed";
+          sub.textContent = "The supplied secret could not unlock the drive.";
+          body.innerHTML = `
+            <div class="notice notice--danger">
+              <strong>${errMsg || "Unknown error"}</strong>
+            </div>
+            <p>The drive itself is unchanged. You can return to the previous step and re-enter the secret, or try the other unlock method.</p>
+          `;
+        }
+        Wizard.markReady(4, true);
+      }
+
+      // ---- Wizard wiring ----------------------------------------------
+      Wizard.init({
+        total: 5,
+        onAdvance: (from, to) => {
+          if (to === 4) runMount();
+          // The mount step finishes by transitioning Wizard.go(5) inside finalize() — but
+          // because the user clicked Next to enter step 4, we want them to advance to 5
+          // automatically once finalize() runs. We piggy-back on markReady(4, true) and
+          // an auto-advance:
+        },
+        onCancel: () => { window.location.href = "index.html"; },
+        onFinish: () => { window.location.href = "index.html"; },
+      });
+
+      // Auto-advance from step 4 to 5 once the mount step is "ready".
+      const observer = new MutationObserver(() => {
+        const s4 = document.querySelector('.wizard-step[data-step="4"]');
+        if (s4 && s4.dataset.ready === "true" && Wizard.currentStep() === 4) {
+          setTimeout(() => Wizard.go(5), 400);
+        }
+      });
+      observer.observe(document.querySelector('.wizard-step[data-step="4"]'), { attributes: true, attributeFilter: ["data-ready"] });
+
+    })();
+  </script>
+</body>
+</html>

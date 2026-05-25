@@ -1,0 +1,191 @@
+/* app.css — DriveEncryptor-specific layout on top of win9x.css */
+
+/* The main window grows to a comfortable working size. */
+.app-window {
+  width: min(880px, calc(100vw - 48px));
+  margin: 0 auto;
+}
+
+/* ----- Drive list page ----- */
+
+.drive-list-frame {
+  padding: 4px;
+  background: var(--win-face);
+}
+.drive-list-frame .listview {
+  height: 280px;
+}
+.drive-list-frame .listview td.size,
+.drive-list-frame .listview th.size { text-align: right; }
+.drive-list-frame .listview td.flag,
+.drive-list-frame .listview th.flag { text-align: center; width: 70px; }
+
+.drive-icon {
+  display: inline-block;
+  width: 16px; height: 16px;
+  margin-right: 4px;
+  vertical-align: -3px;
+  background: var(--win-face);
+  border: 1px solid var(--win-shadow);
+  position: relative;
+}
+.drive-icon::after {
+  content: "";
+  position: absolute;
+  left: 2px; top: 6px;
+  width: 10px; height: 4px;
+  background: var(--win-shadow);
+}
+.drive-icon--system { background: #d0d0d0; }
+.drive-icon--system::before {
+  content: "OS";
+  position: absolute;
+  left: 1px; top: -1px;
+  font-size: 8px;
+  color: #404040;
+}
+.drive-icon--usb { background: #e8e8b0; }
+.drive-icon--usb::before {
+  content: "USB";
+  position: absolute;
+  left: 0; top: -1px;
+  font-size: 7px;
+  color: #404040;
+}
+
+/* ----- Wizard generic ----- */
+
+.wizard-window {
+  width: min(640px, calc(100vw - 48px));
+  margin: 0 auto;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 4px 12px;
+  font-size: 11px;
+  margin: 8px 0;
+}
+.kv dt { font-weight: bold; }
+.kv dd { margin: 0; word-break: break-all; }
+
+.warning-list {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  font-size: 11px;
+}
+.warning-list li {
+  padding: 4px 6px;
+  background: var(--win-light);
+  border: 1px solid var(--win-shadow);
+  margin-bottom: 4px;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.warning-list li input { margin-top: 2px; }
+
+/* ----- Recovery-key grid (4×4 of 6-digit groups) ----- */
+
+.recovery-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  background: var(--win-light);
+  border: 2px solid;
+  border-color: var(--win-shadow) var(--win-light) var(--win-light) var(--win-shadow);
+  box-shadow: inset 1px 1px 0 0 var(--win-dark),
+              inset -1px -1px 0 0 var(--win-face-light);
+  padding: 12px;
+  margin: 10px 0;
+}
+.recovery-grid__group {
+  font-family: "Lucida Console", "Courier New", monospace;
+  font-size: 14px;
+  text-align: center;
+  letter-spacing: 1px;
+  color: var(--win-text);
+  padding: 4px 0;
+  border: 1px dotted var(--win-shadow);
+  background: #f8f8f8;
+  user-select: text;
+}
+
+.recovery-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+/* ----- Progress page ----- */
+
+.progress-stage {
+  font-size: 11px;
+  margin: 6px 0 4px 0;
+  font-weight: bold;
+}
+.progress-detail {
+  font-size: 11px;
+  color: var(--win-shadow);
+  margin: 0 0 8px 0;
+  min-height: 1em;
+}
+
+.log-pane {
+  font-family: "Lucida Console", "Courier New", monospace;
+  font-size: 11px;
+  background: var(--win-light);
+  color: var(--win-text);
+  border: 2px solid;
+  border-color: var(--win-shadow) var(--win-light) var(--win-light) var(--win-shadow);
+  box-shadow: inset 1px 1px 0 0 var(--win-dark),
+              inset -1px -1px 0 0 var(--win-face-light);
+  padding: 6px 8px;
+  height: 140px;
+  overflow-y: auto;
+  white-space: pre;
+  margin: 8px 0;
+}
+.log-pane .log-line { display: block; }
+.log-pane .log-line--err { color: #b00000; }
+
+/* ----- Mock-modal banner above the faux passphrase dialog ----- */
+
+.mock-banner {
+  background: #fff8c0;
+  border: 1px dashed #c0a000;
+  padding: 6px 8px;
+  font-size: 10px;
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+.mock-banner code {
+  font-family: "Lucida Console", "Courier New", monospace;
+  font-size: 10px;
+  background: var(--win-face);
+  padding: 0 3px;
+  border: 1px solid var(--win-shadow);
+}
+
+/* ----- Inline links between the prototype pages ----- */
+
+a, a:visited {
+  color: var(--win-link);
+  text-decoration: underline;
+}
+a:focus { outline: 1px dotted var(--win-text); outline-offset: 1px; }
+
+/* ----- Misc helpers ----- */
+
+.muted { color: var(--win-shadow); }
+.right { text-align: right; }
+.mt-1 { margin-top: 6px; }
+.mt-2 { margin-top: 12px; }
+.mb-1 { margin-bottom: 6px; }
+.mono { font-family: "Lucida Console", "Courier New", monospace; }
+
+.row { display: flex; gap: 8px; align-items: center; }
+.row > * { flex: 0 0 auto; }
+.row > .grow { flex: 1; }

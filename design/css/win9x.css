@@ -1,0 +1,487 @@
+/* win9x.css — Windows 95/98 chrome.
+ * Hand-rolled (no 98.css). All colors and bevels are derived from the
+ * standard Win9x system palette so the prototype is self-contained.
+ */
+
+:root {
+  --win-face:        #c0c0c0;  /* button face / window face */
+  --win-face-light:  #dfdfdf;
+  --win-light:       #ffffff;  /* highlight (top/left of raised) */
+  --win-shadow:      #808080;  /* shadow (bottom/right of raised; top/left of sunken) */
+  --win-dark:        #000000;  /* outer dark edge */
+  --win-text:        #000000;
+  --win-text-disabled: #808080;
+  --win-text-disabled-shadow: #ffffff;  /* engraved-disabled effect */
+  --win-title-active-l: #000080;
+  --win-title-active-r: #1084d0;
+  --win-title-inactive-l: #808080;
+  --win-title-inactive-r: #b5b5b5;
+  --win-title-text:  #ffffff;
+  --win-link:        #000080;
+  --win-selection:   #000080;
+  --win-selection-text: #ffffff;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  font-family: "MS Sans Serif", "Microsoft Sans Serif", Tahoma, Geneva, sans-serif;
+  font-size: 11px;
+  color: var(--win-text);
+  background: #008080;  /* the iconic teal desktop */
+  /* let the desktop fill the viewport */
+  min-height: 100vh;
+}
+
+/* The desktop is the parent backdrop; windows float on it. */
+.desktop {
+  min-height: 100vh;
+  padding: 24px;
+}
+
+/* ----- Window ----- */
+
+.window {
+  background: var(--win-face);
+  border: 2px solid;
+  border-color: var(--win-light) var(--win-dark) var(--win-dark) var(--win-light);
+  box-shadow: inset 1px 1px 0 0 var(--win-face-light),
+              inset -1px -1px 0 0 var(--win-shadow),
+              1px 1px 0 0 #000;
+  padding: 2px;
+}
+
+.window--centered {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.title-bar {
+  display: flex;
+  align-items: center;
+  height: 18px;
+  padding: 1px 2px 1px 3px;
+  color: var(--win-title-text);
+  font-weight: bold;
+  background: linear-gradient(90deg, var(--win-title-active-l) 0%, var(--win-title-active-r) 100%);
+  user-select: none;
+}
+
+.title-bar--inactive {
+  background: linear-gradient(90deg, var(--win-title-inactive-l) 0%, var(--win-title-inactive-r) 100%);
+}
+
+.title-bar__icon {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  margin-right: 4px;
+  background: var(--win-face);
+  border: 1px solid var(--win-dark);
+  position: relative;
+  flex: 0 0 16px;
+}
+
+/* Lock-icon glyph drawn in CSS */
+.title-bar__icon::before {
+  content: "";
+  position: absolute;
+  left: 4px; top: 6px;
+  width: 6px; height: 5px;
+  background: #ffd700;
+  border: 1px solid var(--win-dark);
+}
+.title-bar__icon::after {
+  content: "";
+  position: absolute;
+  left: 5px; top: 2px;
+  width: 4px; height: 5px;
+  border: 1px solid var(--win-dark);
+  border-bottom: none;
+  border-radius: 3px 3px 0 0;
+}
+
+.title-bar__text {
+  flex: 1;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.title-bar__buttons {
+  display: flex;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.title-btn {
+  width: 16px;
+  height: 14px;
+  padding: 0;
+  font-size: 9px;
+  line-height: 1;
+  background: var(--win-face);
+  border: 1px solid;
+  border-color: var(--win-light) var(--win-dark) var(--win-dark) var(--win-light);
+  box-shadow: inset 1px 1px 0 0 var(--win-face-light),
+              inset -1px -1px 0 0 var(--win-shadow);
+  color: var(--win-text);
+  font-family: "Marlett", "Segoe UI Symbol", monospace;
+  cursor: default;
+}
+.title-btn:active {
+  border-color: var(--win-dark) var(--win-light) var(--win-light) var(--win-dark);
+  box-shadow: inset 1px 1px 0 0 var(--win-shadow),
+              inset -1px -1px 0 0 var(--win-face-light);
+  padding: 1px 0 0 1px;
+}
+.title-btn:focus { outline: none; }
+
+/* ----- Menu bar ----- */
+
+.menu-bar {
+  display: flex;
+  background: var(--win-face);
+  padding: 1px 0;
+  border-bottom: 1px solid var(--win-shadow);
+  user-select: none;
+}
+.menu-bar__item {
+  padding: 2px 7px;
+  cursor: default;
+}
+.menu-bar__item:hover {
+  background: var(--win-selection);
+  color: var(--win-selection-text);
+}
+.menu-bar__item u { text-decoration: underline; }
+
+/* ----- Toolbar ----- */
+
+.toolbar {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-bottom: 1px solid var(--win-shadow);
+  background: var(--win-face);
+}
+
+.toolbar button { min-width: auto; }
+
+/* ----- Buttons ----- */
+
+button, .btn {
+  font-family: inherit;
+  font-size: 11px;
+  background: var(--win-face);
+  color: var(--win-text);
+  min-width: 75px;
+  min-height: 23px;
+  padding: 3px 12px;
+  border: 1px solid;
+  border-color: var(--win-light) var(--win-dark) var(--win-dark) var(--win-light);
+  box-shadow: inset 1px 1px 0 0 var(--win-face-light),
+              inset -1px -1px 0 0 var(--win-shadow);
+  cursor: default;
+  position: relative;
+}
+
+button:focus, .btn:focus {
+  outline: 1px dotted var(--win-text);
+  outline-offset: -4px;
+}
+
+button:active:not([disabled]),
+.btn:active:not([disabled]) {
+  border-color: var(--win-dark) var(--win-light) var(--win-light) var(--win-dark);
+  box-shadow: inset 1px 1px 0 0 var(--win-shadow),
+              inset -1px -1px 0 0 var(--win-face-light);
+  padding: 4px 11px 2px 13px;
+}
+
+button[disabled], .btn[disabled] {
+  color: var(--win-text-disabled);
+  text-shadow: 1px 1px 0 var(--win-text-disabled-shadow);
+  cursor: default;
+}
+
+/* Default button — emphasized with thicker outer border */
+.btn--default {
+  border: 1px solid var(--win-dark);
+  box-shadow: inset 1px 1px 0 0 var(--win-light),
+              inset -1px -1px 0 0 var(--win-shadow),
+              inset 2px 2px 0 0 var(--win-face),
+              inset -2px -2px 0 0 var(--win-face);
+}
+
+/* ----- Form controls ----- */
+
+input[type="text"],
+input[type="password"],
+textarea,
+select {
+  font-family: inherit;
+  font-size: 11px;
+  background: var(--win-light);
+  color: var(--win-text);
+  border: 2px solid;
+  border-color: var(--win-shadow) var(--win-light) var(--win-light) var(--win-shadow);
+  box-shadow: inset 1px 1px 0 0 var(--win-dark),
+              inset -1px -1px 0 0 var(--win-face-light);
+  padding: 2px 3px;
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus,
+textarea:focus { outline: none; }
+
+input[type="text"][disabled],
+input[type="password"][disabled] {
+  background: var(--win-face);
+  color: var(--win-text-disabled);
+}
+
+/* Checkboxes & radios — keep system rendering for now; just align with text */
+input[type="checkbox"], input[type="radio"] {
+  margin: 0 4px 0 0;
+  vertical-align: -2px;
+}
+
+label { user-select: none; }
+
+/* ----- Group box (fieldset) ----- */
+
+fieldset, .group-box {
+  border: 1px solid var(--win-shadow);
+  box-shadow: 1px 1px 0 0 var(--win-light) inset,
+              -1px -1px 0 0 var(--win-light);
+  padding: 10px 8px 8px 8px;
+  margin: 0 0 8px 0;
+}
+fieldset > legend, .group-box__legend {
+  padding: 0 4px;
+  font-size: 11px;
+}
+
+/* ----- ListView (details mode) ----- */
+
+.listview {
+  background: var(--win-light);
+  border: 2px solid;
+  border-color: var(--win-shadow) var(--win-light) var(--win-light) var(--win-shadow);
+  box-shadow: inset 1px 1px 0 0 var(--win-dark),
+              inset -1px -1px 0 0 var(--win-face-light);
+  overflow: auto;
+}
+
+.listview table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.listview thead th {
+  background: var(--win-face);
+  border: 1px solid;
+  border-color: var(--win-light) var(--win-dark) var(--win-dark) var(--win-light);
+  box-shadow: inset 1px 1px 0 0 var(--win-face-light),
+              inset -1px -1px 0 0 var(--win-shadow);
+  padding: 2px 6px;
+  text-align: left;
+  font-weight: normal;
+  user-select: none;
+}
+.listview tbody td {
+  padding: 2px 6px;
+  border-bottom: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.listview tbody tr { cursor: default; user-select: none; }
+.listview tbody tr.selected td {
+  background: var(--win-selection);
+  color: var(--win-selection-text);
+}
+.listview tbody tr.disabled td {
+  color: var(--win-text-disabled);
+  font-style: italic;
+}
+
+/* ----- Status bar ----- */
+
+.status-bar {
+  display: flex;
+  border-top: 1px solid var(--win-light);
+  padding: 2px 0 0 0;
+  background: var(--win-face);
+  font-size: 11px;
+}
+.status-bar__panel {
+  border: 1px solid;
+  border-color: var(--win-shadow) var(--win-light) var(--win-light) var(--win-shadow);
+  padding: 2px 6px;
+  margin: 0 1px;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.status-bar__panel--auto { flex: 0 0 auto; }
+
+/* ----- Progress bar (chunked Win9x style) ----- */
+
+.progress {
+  height: 18px;
+  background: var(--win-light);
+  border: 2px solid;
+  border-color: var(--win-shadow) var(--win-light) var(--win-light) var(--win-shadow);
+  box-shadow: inset 1px 1px 0 0 var(--win-dark),
+              inset -1px -1px 0 0 var(--win-face-light);
+  padding: 1px;
+  position: relative;
+  overflow: hidden;
+}
+.progress__fill {
+  height: 100%;
+  width: 0;
+  /* The classic 16-px-wide blue blocks separated by 2-px gaps. */
+  background:
+    repeating-linear-gradient(
+      to right,
+      var(--win-title-active-l) 0,
+      var(--win-title-active-l) 14px,
+      transparent 14px,
+      transparent 16px
+    );
+  transition: width 0.1s linear;
+}
+.progress--indeterminate .progress__fill {
+  width: 32%;
+  animation: prog-marquee 1.4s linear infinite;
+}
+@keyframes prog-marquee {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(360%); }
+}
+
+/* ----- Wizard 97 layout ----- */
+
+.wizard {
+  display: flex;
+  flex-direction: column;
+  min-height: 420px;
+}
+
+.wizard__banner {
+  background: var(--win-light);
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--win-shadow);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.wizard__banner h2 {
+  font-size: 13px;
+  margin: 0 0 2px 0;
+  font-weight: bold;
+}
+.wizard__banner p {
+  font-size: 11px;
+  margin: 0;
+  color: var(--win-text);
+}
+.wizard__banner-icon {
+  width: 48px; height: 48px;
+  flex: 0 0 48px;
+  background: var(--win-face);
+  border: 1px solid var(--win-shadow);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 28px;
+  font-weight: bold;
+}
+
+.wizard__body {
+  flex: 1 1 auto;
+  padding: 16px;
+  background: var(--win-face);
+}
+
+.wizard__footer {
+  border-top: 1px solid var(--win-light);
+  padding: 12px 16px;
+  background: var(--win-face);
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.wizard__footer .footer-spacer { flex: 1; }
+
+.wizard-step { display: none; }
+.wizard-step.active { display: block; }
+
+/* ----- Modal dialog ----- */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.25);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.modal-backdrop.open { display: flex; }
+
+.modal {
+  min-width: 360px;
+  max-width: 480px;
+}
+.modal__body {
+  padding: 16px;
+  background: var(--win-face);
+  display: flex;
+  gap: 12px;
+}
+.modal__icon {
+  width: 32px; height: 32px;
+  flex: 0 0 32px;
+  font-size: 22px;
+  font-weight: bold;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--win-light);
+  border: 1px solid var(--win-shadow);
+}
+.modal__icon--warn { color: #c0c000; }
+.modal__icon--error { color: #d00000; }
+.modal__icon--question { color: var(--win-title-active-l); }
+.modal__text { font-size: 11px; line-height: 1.45; }
+.modal__footer {
+  padding: 8px;
+  background: var(--win-face);
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  border-top: 1px solid var(--win-light);
+}
+
+/* ----- Inline notice / banner ----- */
+
+.notice {
+  background: #ffffd0;
+  border: 1px solid #d0a000;
+  padding: 8px 10px;
+  margin: 8px 0;
+  font-size: 11px;
+}
+.notice--danger {
+  background: #ffe0e0;
+  border-color: #b00000;
+}
+.notice--info {
+  background: #e0e8ff;
+  border-color: #404090;
+}
+.notice strong { display: block; margin-bottom: 2px; }

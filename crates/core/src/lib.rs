@@ -1,0 +1,20 @@
+pub mod disk;
+pub mod drive_linux;
+pub mod errors;
+pub mod escrow;
+pub mod keymat;
+pub mod operations;
+pub mod pdf;
+pub mod planner;
+pub mod progress;
+pub mod prompt;
+pub mod recovery_key;
+pub mod veracrypt;
+
+pub use errors::{Error, Result};
+pub use escrow::{Argon2Params, RecoveryFile};
+pub use keymat::SecretBytes;
+pub use progress::{NoopSink, ProgressEvent, ProgressSink, TracingSink};
+pub use prompt::{SecretPrompt, StaticPrompt, TtyPrompt};
+pub use recovery_key::RecoveryKey;
+pub use veracrypt::{MasterKeyfile, VeraCryptDriver, VeraCryptFilesystem};

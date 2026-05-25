@@ -1,0 +1,9 @@
+/target
+**/*.rs.bk
+*.pdb
+.DS_Store
+
+# Test artifacts
+*.img
+*.loop
+/tmp-test-*

@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>DriveEncryptor</title>
+  <link rel="stylesheet" href="css/win9x.css">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div class="desktop">
+    <div class="window app-window">
+
+      <div class="title-bar">
+        <span class="title-bar__icon" aria-hidden="true"></span>
+        <span class="title-bar__text">DriveEncryptor</span>
+        <div class="title-bar__buttons">
+          <button class="title-btn" aria-label="Minimize">_</button>
+          <button class="title-btn" aria-label="Maximize">▢</button>
+          <button class="title-btn" aria-label="Close">×</button>
+        </div>
+      </div>
+
+      <div class="menu-bar">
+        <div class="menu-bar__item" id="menu-file"><u>F</u>ile</div>
+        <div class="menu-bar__item" id="menu-view"><u>V</u>iew</div>
+        <div class="menu-bar__item" id="menu-help"><u>H</u>elp</div>
+      </div>
+
+      <div class="toolbar">
+        <button id="btn-encrypt" disabled>Encrypt&hellip;</button>
+        <button id="btn-unlock"  disabled>Unlock&hellip;</button>
+        <button id="btn-info"    disabled>Info&hellip;</button>
+        <button id="btn-refresh">Refresh</button>
+      </div>
+
+      <div class="drive-list-frame">
+        <div class="listview" role="region" aria-label="Detected drives">
+          <table>
+            <colgroup>
+              <col style="width: 22%">
+              <col style="width: 38%">
+              <col style="width: 12%">
+              <col style="width: 14%">
+              <col style="width: 14%">
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Path</th>
+                <th>Vendor / Model</th>
+                <th class="size">Size</th>
+                <th class="flag">Removable</th>
+                <th class="flag">Status</th>
+              </tr>
+            </thead>
+            <tbody id="drive-rows"><!-- populated by script below --></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="status-bar">
+        <div class="status-bar__panel" id="status-text">Select a drive to enable Encrypt or Unlock.</div>
+        <div class="status-bar__panel status-bar__panel--auto">v0.3 design preview</div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="js/mock-data.js"></script>
+  <script>
+    (async function () {
+      const tbody = document.getElementById("drive-rows");
+      const btnEncrypt = document.getElementById("btn-encrypt");
+      const btnUnlock  = document.getElementById("btn-unlock");
+      const btnInfo    = document.getElementById("btn-info");
+      const btnRefresh = document.getElementById("btn-refresh");
+      const status     = document.getElementById("status-text");
+
+      let selected = null;
+
+      async function refresh() {
+        status.textContent = "Scanning…";
+        try {
+          await MOCK.loadDrives();
+        } catch (e) {
+          status.textContent = `Drive scan failed: ${e}`;
+          return;
+        }
+        render();
+      }
+
+      function render() {
+        tbody.innerHTML = "";
+        let count = 0;
+        for (const d of MOCK.drives) {
+          const tr = document.createElement("tr");
+          tr.dataset.path = d.path;
+          if (d.isSystem) tr.classList.add("disabled");
+          tr.innerHTML = `
+            <td><span class="drive-icon ${d.isSystem ? "drive-icon--system" : (d.removable ? "drive-icon--usb" : "")}"></span>${d.path}</td>
+            <td>${d.vendor || ""} ${d.model || ""}</td>
+            <td class="size">${MOCK.formatSize(d.size_bytes)}</td>
+            <td class="flag">${d.removable ? "Yes" : "No"}</td>
+            <td class="flag">${d.isSystem ? "System" : "Idle"}</td>
+          `;
+          tr.addEventListener("click", () => {
+            if (d.isSystem) return;
+            selectRow(tr, d);
+          });
+          tr.addEventListener("dblclick", () => {
+            if (d.isSystem) return;
+            selectRow(tr, d);
+            window.location.href = `encrypt.html?path=${encodeURIComponent(d.path)}`;
+          });
+          tbody.appendChild(tr);
+          count++;
+        }
+        const sys = MOCK.drives.find(d => d.isSystem);
+        if (count === 0) {
+          status.textContent = "No drives detected. Connect a drive and click Refresh.";
+        } else if (sys) {
+          status.textContent = `${count} drives detected — system drive (${sys.path}) refused by planner.`;
+        } else {
+          status.textContent = `${count} drives detected.`;
+        }
+        selected = null;
+        btnEncrypt.disabled = btnUnlock.disabled = btnInfo.disabled = true;
+      }
+
+      function selectRow(tr, d) {
+        document.querySelectorAll("#drive-rows tr.selected").forEach(el => el.classList.remove("selected"));
+        tr.classList.add("selected");
+        selected = d;
+        btnEncrypt.disabled = false;
+        btnUnlock.disabled  = false;
+        btnInfo.disabled    = false;
+        status.textContent = `${d.path} selected — ${MOCK.formatSize(d.size_bytes)} ${d.removable ? "removable" : "internal"} ${d.vendor || ""} ${d.model || ""}`.trim();
+      }
+
+      btnEncrypt.addEventListener("click", () => {
+        if (!selected) return;
+        window.location.href = `encrypt.html?path=${encodeURIComponent(selected.path)}`;
+      });
+      btnUnlock.addEventListener("click", () => {
+        if (!selected) return;
+        window.location.href = `unlock.html?path=${encodeURIComponent(selected.path)}`;
+      });
+      btnInfo.addEventListener("click", () => {
+        // Info screen is deferred to v0.3.1; CLI `info` already covers this.
+        alert("Drive info — use the CLI for now: drive-encryptor info " + (selected ? selected.path : "<device>"));
+      });
+      btnRefresh.addEventListener("click", refresh);
+
+      // ---- Menu bar wiring (File / View / Help) ----------------------
+      // Single-click each header → direct action. Win9x dropdown menus would
+      // be authentic but cost more JS/CSS than the v0.3 scope warrants.
+      document.getElementById("menu-file").addEventListener("click", async () => {
+        // File → for now: refresh + a hint about how to quit.
+        await refresh();
+        // Closing a Tauri 2 window from JS requires the window plugin.
+        // Cheaper: ask the user to use the [×] title-bar button.
+      });
+      document.getElementById("menu-view").addEventListener("click", refresh);
+      document.getElementById("menu-help").addEventListener("click", () => {
+        alert(
+          "DriveEncryptor v0.3 (in development)\n\n" +
+          "GUI for AES-256-XTS drive encryption via VeraCrypt.\n" +
+          "Recovery key: 256-bit, BitLocker-style, exported as PDF.\n" +
+          "Drives encrypted here open with stock VeraCrypt anywhere.\n\n" +
+          "CLI alternatives:\n" +
+          "  drive-encryptor list\n" +
+          "  drive-encryptor encrypt /dev/sdX\n" +
+          "  drive-encryptor unlock  /dev/sdX --mountpoint /mnt/foo\n" +
+          "  drive-encryptor lock    /mnt/foo"
+        );
+      });
+
+      await refresh();
+    })();
+  </script>
+</body>
+</html>

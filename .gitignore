@@ -2,7 +2,7 @@
 **/*.rs.bk
 *.pdb
 .DS_Store
-
+.claude
 # Test artifacts
 *.img
 *.loop

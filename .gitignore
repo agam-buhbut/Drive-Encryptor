@@ -3,6 +3,14 @@
 *.pdb
 .DS_Store
 .claude
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Secrets
+.env
+
 # Test artifacts
 *.img
 *.loop

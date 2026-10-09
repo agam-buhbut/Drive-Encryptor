@@ -47,7 +47,10 @@ window.Wizard = (function () {
     const back = el("btn-back");
     const next = el("btn-next");
     const cancel = el("btn-cancel");
-    if (back)   back.disabled   = current === 1;
+    // Steps marked data-no-back (encryption running or finished) can't go
+    // back: re-advancing would start a second encrypt of the same drive.
+    const active = steps().find(s => parseInt(s.dataset.step, 10) === current);
+    if (back)   back.disabled   = current === 1 || (active && "noBack" in active.dataset);
     if (cancel) cancel.disabled = false;
     if (next) {
       const isLast = current === total;

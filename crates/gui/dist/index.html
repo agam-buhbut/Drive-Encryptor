@@ -96,8 +96,8 @@
           tr.dataset.path = d.path;
           if (d.isSystem) tr.classList.add("disabled");
           tr.innerHTML = `
-            <td><span class="drive-icon ${d.isSystem ? "drive-icon--system" : (d.removable ? "drive-icon--usb" : "")}"></span>${d.path}</td>
-            <td>${d.vendor || ""} ${d.model || ""}</td>
+            <td><span class="drive-icon ${d.isSystem ? "drive-icon--system" : (d.removable ? "drive-icon--usb" : "")}"></span>${MOCK.esc(d.path)}</td>
+            <td>${MOCK.esc(d.vendor)} ${MOCK.esc(d.model)}</td>
             <td class="size">${MOCK.formatSize(d.size_bytes)}</td>
             <td class="flag">${d.removable ? "Yes" : "No"}</td>
             <td class="flag">${d.isSystem ? "System" : "Idle"}</td>

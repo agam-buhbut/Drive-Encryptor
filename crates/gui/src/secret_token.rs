@@ -20,6 +20,7 @@ pub const TTL: Duration = Duration::from_secs(60);
 #[derive(Clone)]
 pub struct TokenStore {
     inner: Arc<Mutex<HashMap<String, (SecretBytes, Instant)>>>,
+    ttl: Duration,
 }
 
 impl Default for TokenStore {
@@ -30,8 +31,13 @@ impl Default for TokenStore {
 
 impl TokenStore {
     pub fn new() -> Self {
+        Self::with_ttl(TTL)
+    }
+
+    pub fn with_ttl(ttl: Duration) -> Self {
         Self {
             inner: Arc::new(Mutex::new(HashMap::new())),
+            ttl,
         }
     }
 
@@ -51,16 +57,25 @@ impl TokenStore {
     pub fn take(&self, id: &str) -> Option<SecretBytes> {
         let mut g = self.inner.lock().unwrap();
         let (secret, t) = g.remove(id)?;
-        if t.elapsed() >= TTL {
+        if t.elapsed() >= self.ttl {
             return None;
         }
         Some(secret)
     }
 
+    /// Like `take`, but leaves the secret in place (e.g. so the generated
+    /// recovery key's PDF can be saved more than once).
+    pub fn get(&self, id: &str) -> Option<SecretBytes> {
+        let g = self.inner.lock().unwrap();
+        let (secret, t) = g.get(id)?;
+        (t.elapsed() < self.ttl).then(|| secret.clone())
+    }
+
     /// Drop all entries older than `TTL`. Called periodically by the sweeper.
     pub fn sweep(&self) {
         let mut g = self.inner.lock().unwrap();
-        g.retain(|_, (_, t)| t.elapsed() < TTL);
+        let ttl = self.ttl;
+        g.retain(|_, (_, t)| t.elapsed() < ttl);
     }
 
     /// Wipe everything. Used on app shutdown / `cancel`.
@@ -138,6 +153,21 @@ mod tests {
             entry.1 = Instant::now() - TTL - Duration::from_millis(1);
         }
         assert!(s.take(&id).is_none());
+    }
+
+    #[test]
+    fn get_is_repeatable_and_honours_custom_ttl() {
+        let s = TokenStore::with_ttl(Duration::from_secs(1800));
+        let id = s.insert(SecretBytes::from("k")).unwrap();
+        assert_eq!(s.get(&id).unwrap().as_bytes(), b"k");
+        assert_eq!(s.get(&id).unwrap().as_bytes(), b"k");
+        // Older than the default TTL but within the custom one: still valid.
+        s.inner.lock().unwrap().get_mut(&id).unwrap().1 =
+            Instant::now() - TTL - Duration::from_secs(1);
+        assert!(s.get(&id).is_some());
+        s.inner.lock().unwrap().get_mut(&id).unwrap().1 =
+            Instant::now() - Duration::from_secs(1801);
+        assert!(s.get(&id).is_none());
     }
 
     #[test]

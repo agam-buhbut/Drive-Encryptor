@@ -155,6 +155,15 @@ window.MOCK = (function () {
     return groups;
   }
 
+  // Escape text before it goes into an innerHTML template. Drive vendor,
+  // model and serial come from the device itself (a USB stick can report
+  // arbitrary strings), so they must never be parsed as markup.
+  function esc(s) {
+    return String(s ?? "").replace(/[&<>"']/g, (c) => (
+      { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+    ));
+  }
+
   function query() {
     const out = {};
     for (const [k, v] of new URL(window.location.href).searchParams) out[k] = v;
@@ -169,6 +178,7 @@ window.MOCK = (function () {
 
     // helpers
     formatSize,
+    esc,
     parseRecoveryKey,
     query,
 

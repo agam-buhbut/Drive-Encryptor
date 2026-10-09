@@ -117,7 +117,7 @@
           </section>
 
           <!-- Step 5: Progress -------------------------------------------- -->
-          <section class="wizard-step" data-step="5" data-requires-ready data-ready="false">
+          <section class="wizard-step" data-step="5" data-requires-ready data-ready="false" data-no-back>
             <div class="wizard__banner">
               <div class="wizard__banner-icon" style="color:var(--win-title-active-l);">⚙</div>
               <div>
@@ -135,7 +135,7 @@
           </section>
 
           <!-- Step 6: Recovery key reveal --------------------------------- -->
-          <section class="wizard-step" data-step="6">
+          <section class="wizard-step" data-step="6" data-no-back>
             <div class="wizard__banner">
               <div class="wizard__banner-icon" style="color:#008000;">🗝</div>
               <div>
@@ -161,7 +161,7 @@
           </section>
 
           <!-- Step 7: Done ------------------------------------------------ -->
-          <section class="wizard-step" data-step="7">
+          <section class="wizard-step" data-step="7" data-no-back>
             <div class="wizard__banner">
               <div class="wizard__banner-icon" style="color:#008000;">✓</div>
               <div>
@@ -239,10 +239,10 @@
       // ---- Step 1: drive summary + serial confirmation -----------------
       const summary = document.getElementById("drive-summary");
       summary.innerHTML = `
-        <dt>Path</dt><dd class="mono">${drive.path}</dd>
-        <dt>Vendor / Model</dt><dd>${drive.vendor || ""} ${drive.model || ""}</dd>
+        <dt>Path</dt><dd class="mono">${MOCK.esc(drive.path)}</dd>
+        <dt>Vendor / Model</dt><dd>${MOCK.esc(drive.vendor)} ${MOCK.esc(drive.model)}</dd>
         <dt>Size</dt><dd>${MOCK.formatSize(drive.size_bytes)}</dd>
-        <dt>Serial</dt><dd class="mono">${confirmToken}</dd>
+        <dt>Serial</dt><dd class="mono">${MOCK.esc(confirmToken)}</dd>
         <dt>Removable</dt><dd>${drive.removable ? "Yes" : "No"}</dd>
       `;
       document.getElementById("expected-serial").textContent = confirmToken;
@@ -276,7 +276,7 @@
         }
         ws.forEach((text, i) => {
           const li = document.createElement("li");
-          li.innerHTML = `<input type="checkbox" id="w${i}"><label for="w${i}">${text}</label>`;
+          li.innerHTML = `<input type="checkbox" id="w${i}"><label for="w${i}">${MOCK.esc(text)}</label>`;
           list.appendChild(li);
         });
         const updateReady = () => {

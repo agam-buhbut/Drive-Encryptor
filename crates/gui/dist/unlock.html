@@ -182,10 +182,10 @@
 
       // ---- Step 1: drive summary ---------------------------------------
       document.getElementById("drive-summary").innerHTML = `
-        <dt>Path</dt><dd class="mono">${drive.path}</dd>
-        <dt>Vendor / Model</dt><dd>${drive.vendor || ""} ${drive.model || ""}</dd>
+        <dt>Path</dt><dd class="mono">${MOCK.esc(drive.path)}</dd>
+        <dt>Vendor / Model</dt><dd>${MOCK.esc(drive.vendor)} ${MOCK.esc(drive.model)}</dd>
         <dt>Size</dt><dd>${MOCK.formatSize(drive.size_bytes)}</dd>
-        <dt>Serial</dt><dd class="mono">${serialDisplay}</dd>
+        <dt>Serial</dt><dd class="mono">${MOCK.esc(serialDisplay)}</dd>
       `;
 
       // ---- Step 2: method choice ---------------------------------------
@@ -284,7 +284,7 @@
           title.textContent = "Mounted";
           sub.textContent = "Your data is now accessible.";
           body.innerHTML = `
-            <p>Drive <code>${drive.path}</code> P2 mounted at <code>${mp.value.trim()}</code>.</p>
+            <p>Drive <code>${MOCK.esc(drive.path)}</code> P2 mounted at <code>${MOCK.esc(mp.value.trim())}</code>.</p>
             <div class="row mt-1">
               <button id="btn-dismount">Lock (dismount) now</button>
             </div>
@@ -311,7 +311,7 @@
           sub.textContent = "The supplied secret could not unlock the drive.";
           body.innerHTML = `
             <div class="notice notice--danger">
-              <strong>${errMsg || "Unknown error"}</strong>
+              <strong>${MOCK.esc(errMsg || "Unknown error")}</strong>
             </div>
             <p>The drive itself is unchanged. You can return to the previous step and re-enter the secret, or try the other unlock method.</p>
           `;

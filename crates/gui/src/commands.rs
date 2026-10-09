@@ -20,16 +20,46 @@ pub struct AppState {
     pub passphrase_tokens: TokenStore,
     pub recovery_key_tokens: TokenStore,
     pub cancel_flag: Arc<AtomicBool>,
+    /// Set while an encrypt or unlock runs; a second one is refused so two
+    /// wizard runs can't operate on a drive at once.
+    pub busy: Arc<AtomicBool>,
 }
 
 impl Default for AppState {
     fn default() -> Self {
         Self {
             passphrase_tokens: TokenStore::new(),
-            recovery_key_tokens: TokenStore::new(),
+            // Long enough for the user to write the key down before saving the PDF.
+            recovery_key_tokens: TokenStore::with_ttl(std::time::Duration::from_secs(30 * 60)),
             cancel_flag: Arc::new(AtomicBool::new(false)),
+            busy: Arc::new(AtomicBool::new(false)),
         }
     }
+}
+
+/// Holds `AppState::busy` for the lifetime of one operation.
+struct BusyGuard(Arc<AtomicBool>);
+
+impl BusyGuard {
+    fn acquire(flag: &Arc<AtomicBool>) -> Result<Self, String> {
+        if flag.swap(true, Ordering::SeqCst) {
+            return Err("another encrypt or unlock operation is already running".into());
+        }
+        Ok(Self(flag.clone()))
+    }
+}
+
+impl Drop for BusyGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+fn find_whole_disk(path: &str) -> Result<drive_linux::Drive, String> {
+    let drives = drive_linux::enumerate().map_err(|e| e.to_string())?;
+    drive_linux::find_whole_disk(&drives, std::path::Path::new(path))
+        .cloned()
+        .ok_or_else(|| format!("no whole disk matching {}", path))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -87,11 +117,7 @@ pub fn list_drives() -> Result<Vec<DriveInfo>, String> {
 
 #[tauri::command]
 pub fn plan_encrypt(path: String, shred: bool) -> Result<EncryptionPlanSummary, String> {
-    let drives = drive_linux::enumerate().map_err(|e| e.to_string())?;
-    let dev = std::path::PathBuf::from(&path);
-    let drive = drive_linux::find_drive_by_path(&drives, &dev)
-        .ok_or_else(|| format!("no drive found matching {}", path))?
-        .clone();
+    let drive = find_whole_disk(&path)?;
     let plan = planner::format_and_encrypt(&drive, shred).map_err(|e| e.to_string())?;
     let confirm_token = drive
         .serial
@@ -183,6 +209,7 @@ pub async fn start_encrypt(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<EncryptResult, String> {
+    let _busy = BusyGuard::acquire(&state.busy)?;
     let passphrase = state
         .passphrase_tokens
         .take(&passphrase_token)
@@ -190,11 +217,8 @@ pub async fn start_encrypt(
 
     state.cancel_flag.store(false, Ordering::SeqCst);
 
-    let drives = drive_linux::enumerate().map_err(|e| e.to_string())?;
     let dev = std::path::PathBuf::from(&drive_path);
-    let drive = drive_linux::find_drive_by_path(&drives, &dev)
-        .ok_or_else(|| format!("drive {} disappeared", drive_path))?
-        .clone();
+    let drive = find_whole_disk(&drive_path)?;
     let plan = planner::format_and_encrypt(&drive, shred).map_err(|e| e.to_string())?;
 
     let veracrypt = VeraCryptDriver::detect().map_err(|e| e.to_string())?;
@@ -243,6 +267,7 @@ pub async fn start_unlock(
     mountpoint: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    let _busy = BusyGuard::acquire(&state.busy)?;
     let drives = drive_linux::enumerate().map_err(|e| e.to_string())?;
     let dev = std::path::PathBuf::from(&drive_path);
     let drive = drive_linux::find_drive_by_path(&drives, &dev)
@@ -329,7 +354,7 @@ pub async fn save_recovery_pdf(
     default_name: String,
     state: State<'_, AppState>,
 ) -> Result<Option<String>, String> {
-    // Pop the dialog FIRST so a user-cancel doesn't consume the token.
+    // Pop the dialog first; nothing to do if the user cancels.
     let picked = rfd::AsyncFileDialog::new()
         .set_title("Save recovery key PDF")
         .set_file_name(&default_name)
@@ -343,8 +368,8 @@ pub async fn save_recovery_pdf(
 
     let secret = state
         .recovery_key_tokens
-        .take(&recovery_key_token)
-        .ok_or_else(|| "recovery-key token expired or already used".to_string())?;
+        .get(&recovery_key_token)
+        .ok_or_else(|| "recovery-key token expired".to_string())?;
     if secret.len() != 32 {
         return Err("recovery key buffer wrong length".into());
     }

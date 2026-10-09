@@ -2,16 +2,18 @@
 //!
 //! VeraCrypt is the underlying AES-256-XTS engine. Our app talks to it only
 //! through this module. Secret material reaches VeraCrypt as a **keyfile path**
-//! pointing to a 0600 file under /dev/shm — the path itself is non-secret, so
-//! it's safe on argv. We never use VeraCrypt's `--password=<...>` with a real
+//! of the form `/proc/<our pid>/fd/<n>` pointing at an anonymous memfd — the
+//! path itself is non-secret, so it's safe on argv. We never use VeraCrypt's `--password=<...>` with a real
 //! password (would leak via /proc/<pid>/cmdline). Volumes are configured for
 //! keyfile-only unlock by passing `--password=` (empty).
 
 use std::io::Write;
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::fd::AsRawFd;
+use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use nix::sys::memfd::{memfd_create, MemFdCreateFlag};
 use sha2::{Digest, Sha256};
 
 use crate::errors::{Error, Result};
@@ -167,15 +169,18 @@ impl VeraCryptDriver {
     }
 }
 
-/// RAII guard for a master keyfile written to /dev/shm. Drops the file (with
-/// best-effort overwrite) on scope exit.
+/// The master keyfile handed to VeraCrypt. It lives in an anonymous,
+/// close-on-exec memfd and is exposed only as `/proc/<our pid>/fd/<n>`, which
+/// VeraCrypt (same uid) can open. Nothing is ever linked into a filesystem, so
+/// a killed or panicking process (release builds use `panic = "abort"`) leaves
+/// no plaintext key behind — the kernel frees the memfd with the last fd.
 #[derive(Debug)]
 pub struct MasterKeyfile {
+    file: std::fs::File,
     path: PathBuf,
 }
 
 impl MasterKeyfile {
-    /// Write the master to a 0600 file under /dev/shm with a random name.
     pub fn write(master: &SecretBytes) -> Result<Self> {
         if master.len() != MASTER_KEY_LEN {
             return Err(Error::VeraCrypt(format!(
@@ -184,19 +189,16 @@ impl MasterKeyfile {
                 master.len()
             )));
         }
-        let mut name_rand = [0u8; 16];
-        getrandom::getrandom(&mut name_rand).map_err(|e| Error::Rng(e.to_string()))?;
-        let name = format!("denc-master-{}", hex::encode(name_rand));
-        let path = PathBuf::from("/dev/shm").join(name);
-
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&path)?;
-        f.write_all(master.as_bytes())?;
-        f.sync_all()?;
-        Ok(Self { path })
+        let fd = memfd_create(c"denc-master", MemFdCreateFlag::MFD_CLOEXEC)
+            .map_err(std::io::Error::from)?;
+        let mut file = std::fs::File::from(fd);
+        file.write_all(master.as_bytes())?;
+        let path = PathBuf::from(format!(
+            "/proc/{}/fd/{}",
+            std::process::id(),
+            file.as_raw_fd()
+        ));
+        Ok(Self { file, path })
     }
 
     pub fn path(&self) -> &Path {
@@ -206,13 +208,8 @@ impl MasterKeyfile {
 
 impl Drop for MasterKeyfile {
     fn drop(&mut self) {
-        // Best-effort overwrite then unlink. If we can't open it, the file's
-        // already gone or unwritable — either way, try to unlink.
-        if let Ok(mut f) = std::fs::OpenOptions::new().write(true).open(&self.path) {
-            let _ = f.write_all(&[0u8; MASTER_KEY_LEN]);
-            let _ = f.sync_all();
-        }
-        let _ = std::fs::remove_file(&self.path);
+        // Scrub the pages before the fd closes; nothing to unlink.
+        let _ = self.file.write_all_at(&[0u8; MASTER_KEY_LEN], 0);
     }
 }
 
@@ -229,21 +226,30 @@ mod tests {
     #[test]
     fn master_keyfile_write_and_drop() {
         let master = SecretBytes::new(vec![0x77; MASTER_KEY_LEN]);
+        let is_our_memfd = |p: &Path| {
+            std::fs::read_link(p)
+                .map(|t| t.to_string_lossy().starts_with("/memfd:denc-master"))
+                .unwrap_or(false)
+        };
         let path = {
             let kf = MasterKeyfile::write(&master).unwrap();
-            assert!(kf.path().starts_with("/dev/shm"));
-            assert!(kf.path().exists());
-            // Permissions should be 0600.
-            use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(kf.path()).unwrap().permissions().mode() & 0o777;
-            assert_eq!(mode, 0o600);
-            // Contents match.
+            // Readable through the path handed to VeraCrypt (a same-uid process).
             let read = std::fs::read(kf.path()).unwrap();
             assert_eq!(read, vec![0x77; MASTER_KEY_LEN]);
+            // Backed by an anonymous memfd, never a named file on any filesystem.
+            assert!(
+                is_our_memfd(kf.path()),
+                "{:?}",
+                std::fs::read_link(kf.path())
+            );
             kf.path().to_path_buf()
         };
-        // After drop, file should be gone.
-        assert!(!path.exists(), "MasterKeyfile not unlinked on drop");
+        // After drop the fd is closed. Parallel tests may reuse the fd number,
+        // so only assert it no longer refers to our memfd.
+        assert!(
+            !is_our_memfd(&path),
+            "MasterKeyfile fd still open after drop"
+        );
     }
 
     #[test]

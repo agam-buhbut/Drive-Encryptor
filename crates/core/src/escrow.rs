@@ -62,6 +62,14 @@ pub const DEFAULT_ARGON2_M_KIB: u32 = 65536; // 64 MiB
 pub const DEFAULT_ARGON2_T: u32 = 3;
 pub const DEFAULT_ARGON2_P: u32 = 1;
 
+// Upper bounds accepted when parsing. recovery.bin sits on an unencrypted
+// partition and its HMAC key is public, so a crafted drive could otherwise
+// demand terabytes of RAM or effectively infinite iterations on unlock.
+// Generous versus what we write (64 MiB, t <= 10, p = 1).
+pub const MAX_ARGON2_M_KIB: u32 = 256 * 1024; // 256 MiB
+pub const MAX_ARGON2_T: u32 = 32;
+pub const MAX_ARGON2_P: u32 = 8;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Argon2Params {
     pub memory_kib: u32,
@@ -443,6 +451,13 @@ impl RecoveryFile {
                 "header hmac mismatch (recovery.bin corrupted or tampered)".into(),
             ));
         }
+        if memory_kib > MAX_ARGON2_M_KIB || iterations > MAX_ARGON2_T || parallelism > MAX_ARGON2_P
+        {
+            return Err(Error::Escrow(format!(
+                "argon2 params out of accepted range (m={} KiB, t={}, p={}; max m={}, t={}, p={})",
+                memory_kib, iterations, parallelism, MAX_ARGON2_M_KIB, MAX_ARGON2_T, MAX_ARGON2_P
+            )));
+        }
         Ok(parsed)
     }
 
@@ -706,6 +721,22 @@ mod tests {
             .unwrap_with_passphrase(&fixture_passphrase())
             .unwrap();
         assert_eq!(master.as_bytes(), fixture_master().as_bytes());
+    }
+
+    #[test]
+    fn rejects_out_of_range_argon2_params() {
+        // A crafted header with a valid (public-key) HMAC but abusive KDF cost.
+        for (m, t, p) in [(u32::MAX, 1, 1), (8, u32::MAX, 1), (8, 1, MAX_ARGON2_P + 1)] {
+            let mut evil = fixture_file();
+            evil.argon2 = Argon2Params {
+                memory_kib: m,
+                iterations: t,
+                parallelism: p,
+            };
+            evil.header_hmac = evil.compute_hmac();
+            let err = RecoveryFile::parse(&evil.serialize()).unwrap_err();
+            assert!(matches!(err, Error::Escrow(s) if s.contains("out of accepted range")));
+        }
     }
 
     #[test]

@@ -20,7 +20,7 @@ use crate::recovery_key::RecoveryKey;
 
 /// Write a single-page PDF containing the recovery key, drive label, and
 /// creation date to `path`. Caller picks the path and is responsible for
-/// printing/storing it. The file is written with the user's default umask.
+/// printing/storing it. See [`create_private`] for how the file is created.
 pub fn export_recovery_pdf(
     path: &Path,
     key: &RecoveryKey,
@@ -108,10 +108,36 @@ pub fn export_recovery_pdf(
         yf = Mm(yf.0 - 5.0);
     }
 
-    let out = File::create(path).map_err(Error::Io)?;
+    let out = create_private(path)?;
     doc.save(&mut BufWriter::new(out))
         .map_err(|e| Error::Io(std::io::Error::other(format!("printpdf save: {}", e))))?;
     Ok(())
+}
+
+/// Create (or truncate) `path` for the recovery PDF: owner-only `0600`, and
+/// refuse a symlink as the final component — the CLI runs as root and may
+/// write into a world-writable cwd. When running as root via sudo/pkexec,
+/// hand the file to the invoking user so they can open their own key.
+fn create_private(path: &Path) -> Result<File> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    let f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .custom_flags(nix::libc::O_NOFOLLOW)
+        .open(path)?;
+    // `mode` only applies on creation; tighten a pre-existing file too.
+    f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    if unsafe { nix::libc::geteuid() } == 0 {
+        let env_id = |k: &str| std::env::var(k).ok().and_then(|v| v.parse().ok());
+        if let Some(uid) = env_id("SUDO_UID").or_else(|| env_id("PKEXEC_UID")) {
+            std::os::unix::fs::fchown(&f, Some(uid), env_id("SUDO_GID"))?;
+        }
+    }
+    Ok(f)
 }
 
 fn format_iso8601(t: SystemTime) -> String {
@@ -186,5 +212,25 @@ mod tests {
             "PDF suspiciously small: {} bytes",
             bytes.len()
         );
+    }
+
+    #[test]
+    fn export_is_owner_only_and_refuses_symlinks() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let key = RecoveryKey::from_bytes([1u8; 32]);
+        let path = dir.path().join("recovery.pdf");
+        std::fs::write(&path, b"old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        export_recovery_pdf(&path, &key, "d", UNIX_EPOCH).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+
+        let target = dir.path().join("victim");
+        std::fs::write(&target, b"keep me").unwrap();
+        let link = dir.path().join("link.pdf");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert!(export_recovery_pdf(&link, &key, "d", UNIX_EPOCH).is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), b"keep me");
     }
 }

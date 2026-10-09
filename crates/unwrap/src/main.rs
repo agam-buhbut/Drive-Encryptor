@@ -17,7 +17,7 @@
 //!
 //! Hard cap: 400 lines (CI-enforced). Keep the spec readable in one sitting.
 
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 
 use aes_gcm::aead::{Aead, KeyInit};
@@ -42,6 +42,12 @@ const NONCE_LEN: usize = 12;
 const TAG_LEN: usize = 16;
 const KEK_LEN: usize = 32;
 const HMAC_KDS_INPUT: &[u8] = b"recovery.bin v1 hmac";
+// Largest Argon2id cost we accept from a header. The HMAC key is public, so a
+// crafted file could otherwise demand terabytes of RAM or run forever.
+// Writers use 64 MiB, t <= 10, p = 1.
+const MAX_M_KIB: u32 = 256 * 1024;
+const MAX_T: u32 = 32;
+const MAX_P: u32 = 8;
 
 // === Recovery-key decoding constants. DESIGN.md §5.5. ===
 const RK_GROUPS: usize = 16;
@@ -75,6 +81,9 @@ fn main() {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
+    if std::io::stdout().is_terminal() {
+        bail!("refusing to print the raw master key to a terminal; redirect stdout to a file");
+    }
 
     let bytes = std::fs::read(&cli.file).with_context(|| format!("read {}", cli.file.display()))?;
     let header = parse_header(&bytes)?;
@@ -137,11 +146,15 @@ fn run() -> Result<()> {
     let mut combined = Vec::with_capacity(MASTER_LEN + TAG_LEN);
     combined.extend_from_slice(ct);
     combined.extend_from_slice(tag);
-    let master = cipher
-        .decrypt(Nonce::from_slice(nonce), combined.as_slice())
-        .map_err(|_| {
-            anyhow::anyhow!("aead authentication failed (wrong secret, or recovery.bin corrupted)")
-        })?;
+    let master = Zeroizing::new(
+        cipher
+            .decrypt(Nonce::from_slice(nonce), combined.as_slice())
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "aead authentication failed (wrong secret, or recovery.bin corrupted)"
+                )
+            })?,
+    );
     if master.len() != MASTER_LEN {
         bail!(
             "decrypted master is {} bytes, expected {}",
@@ -200,6 +213,17 @@ fn parse_header(input: &[u8]) -> Result<Header> {
     let argon2_m_kib = u32::from_le_bytes(input[20..24].try_into().unwrap());
     let argon2_t = u32::from_le_bytes(input[24..28].try_into().unwrap());
     let argon2_p = u32::from_le_bytes(input[28..32].try_into().unwrap());
+    if argon2_m_kib > MAX_M_KIB || argon2_t > MAX_T || argon2_p > MAX_P {
+        bail!(
+            "argon2 params out of accepted range (m={} KiB, t={}, p={}; max {}/{}/{})",
+            argon2_m_kib,
+            argon2_t,
+            argon2_p,
+            MAX_M_KIB,
+            MAX_T,
+            MAX_P
+        );
+    }
 
     let mut salt_passphrase = [0u8; SALT_LEN];
     salt_passphrase.copy_from_slice(&input[32..48]);
@@ -284,7 +308,9 @@ fn decode_recovery_key(s: &str) -> Result<[u8; 32]> {
         if group % 11 != 0 {
             bail!("group {} fails check digit (not divisible by 11)", i + 1);
         }
-        let v = (group / 11) as u16;
+        let Ok(v) = u16::try_from(group / 11) else {
+            bail!("group {} is out of range (max 720885)", i + 1);
+        };
         let be = v.to_be_bytes();
         bytes[i * 2] = be[0];
         bytes[i * 2 + 1] = be[1];
@@ -304,4 +330,29 @@ fn read_stdin_line() -> Result<Vec<u8>> {
         buf.pop();
     }
     Ok(buf.into_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_group_above_u16_range() {
+        // 999999 is divisible by 11 but 999999 / 11 = 90909 > u16::MAX.
+        let key = vec!["999999"; RK_GROUPS].join("-");
+        assert!(decode_recovery_key(&key).is_err());
+        assert!(decode_recovery_key(&vec!["720885"; RK_GROUPS].join("-")).is_ok());
+    }
+
+    #[test]
+    fn rejects_abusive_argon2_params() {
+        let mut body = vec![0u8; HEADER_LEN];
+        body[..8].copy_from_slice(MAGIC);
+        body[8..12].copy_from_slice(&VERSION_V1.to_le_bytes());
+        body[12..16].copy_from_slice(&KDF_ARGON2ID.to_le_bytes());
+        body[16..20].copy_from_slice(&AEAD_AES_256_GCM.to_le_bytes());
+        body[20..24].copy_from_slice(&u32::MAX.to_le_bytes());
+        let err = parse_header(&body).err().expect("must reject").to_string();
+        assert!(err.contains("out of accepted range"), "{err}");
+    }
 }

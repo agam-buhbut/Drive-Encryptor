@@ -144,12 +144,16 @@ window.MOCK = (function () {
   // by the unlock wizard to give immediate format feedback before sending
   // the key to the backend. The backend re-validates.
   function parseRecoveryKey(input) {
-    const stripped = input.replace(/[\s\-.]/g, "");
+    // \p{White_Space} is exactly Rust's char::is_whitespace; JS's \s differs
+    // (it includes U+FEFF and omits U+0085).
+    const stripped = input.replace(/[\p{White_Space}\-.]/gu, "");
     if (!/^[0-9]{96}$/.test(stripped)) return null;
     const groups = [];
     for (let i = 0; i < 16; i++) {
       const g = stripped.slice(i * 6, i * 6 + 6);
-      if (parseInt(g, 10) % 11 !== 0) return null;
+      const v = parseInt(g, 10);
+      // Each group is a 16-bit value times 11, so at most 65535 * 11 = 720885.
+      if (v % 11 !== 0 || v > 720885) return null;
       groups.push(g);
     }
     return groups;

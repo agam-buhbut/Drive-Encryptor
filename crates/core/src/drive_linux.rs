@@ -34,11 +34,36 @@ pub enum DriveKind {
     Loop,
 }
 
+/// Mountpoints that make a disk part of the running system. `[SWAP]` is how
+/// lsblk reports active swap.
+const SYSTEM_MOUNTPOINTS: &[&str] = &["/", "/boot", "/boot/efi", "/usr", "/var", "[SWAP]"];
+
+fn is_system_mountpoint(m: &str) -> bool {
+    SYSTEM_MOUNTPOINTS.contains(&m)
+}
+
 impl Drive {
+    /// `partitions` includes volumes stacked on the disk (LUKS, LVM, ...), so
+    /// root-on-LVM and similar layouts are caught too.
     pub fn is_system_drive(&self) -> bool {
         self.partitions
             .iter()
-            .any(|p| p.mountpoint.as_deref() == Some("/"))
+            .any(|p| p.mountpoint.as_deref().is_some_and(is_system_mountpoint))
+    }
+
+    /// True when device-mapper / RAID volumes (LUKS, LVM, an open VeraCrypt
+    /// volume, md) sit on this disk. Those show up in `partitions` with paths
+    /// that are not `<disk><n>` / `<disk>p<n>` nodes next to the disk.
+    pub fn has_stacked_volumes(&self) -> bool {
+        let disk_name = self.path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        self.partitions.iter().any(|p| {
+            let plain = p.path.parent() == self.path.parent()
+                && p.path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|n| n.starts_with(disk_name));
+            !plain
+        })
     }
 
     pub fn is_currently_mounted(&self) -> bool {
@@ -89,10 +114,14 @@ struct LsblkRoot {
 #[derive(Debug, Deserialize)]
 struct LsblkNode {
     name: String,
+    path: Option<String>,
     #[serde(rename = "type")]
     type_: Option<String>,
     size: Option<u64>,
     mountpoint: Option<String>,
+    /// All mountpoints (util-linux >= 2.37); `mountpoint` shows only one,
+    /// e.g. `/home` for a btrfs partition that also backs `/`.
+    mountpoints: Option<Vec<Option<String>>>,
     fstype: Option<String>,
     serial: Option<String>,
     rm: Option<bool>,
@@ -102,7 +131,8 @@ struct LsblkNode {
     children: Option<Vec<LsblkNode>>,
 }
 
-const LSBLK_FIELDS: &str = "NAME,TYPE,SIZE,MOUNTPOINT,FSTYPE,SERIAL,RM,RO,VENDOR,MODEL";
+const LSBLK_FIELDS: &str =
+    "NAME,PATH,TYPE,SIZE,MOUNTPOINT,MOUNTPOINTS,FSTYPE,SERIAL,RM,RO,VENDOR,MODEL";
 
 /// Run `lsblk -J -b` and return all candidate drives.
 /// Filters out virtual block devices (zram, ram, dm-, md) and
@@ -162,18 +192,10 @@ fn parse_lsblk(json: &[u8]) -> Result<Vec<Drive>> {
             _ => continue,
         };
         let path = PathBuf::from(format!("/dev/{}", node.name));
-        let partitions: Vec<Partition> = node
-            .children
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|c| c.type_.as_deref() == Some("part"))
-            .map(|c| Partition {
-                path: PathBuf::from(format!("/dev/{}", c.name)),
-                size_bytes: c.size.unwrap_or(0),
-                fstype: c.fstype,
-                mountpoint: c.mountpoint,
-            })
-            .collect();
+        let mut partitions = Vec::new();
+        for child in node.children.unwrap_or_default() {
+            flatten_into(child, &mut partitions);
+        }
         drives.push(Drive {
             path,
             kind,
@@ -189,6 +211,36 @@ fn parse_lsblk(json: &[u8]) -> Result<Vec<Drive>> {
     Ok(drives)
 }
 
+/// Collect a disk's partitions *and* everything stacked on them (LUKS, LVM,
+/// RAID, VeraCrypt mappings) so a mount on a nested volume counts against
+/// the physical disk.
+fn flatten_into(node: LsblkNode, out: &mut Vec<Partition>) {
+    let mounts: Vec<String> = node
+        .mountpoint
+        .into_iter()
+        .chain(node.mountpoints.into_iter().flatten().flatten())
+        .filter(|m| !m.is_empty())
+        .collect();
+    // Prefer a system mountpoint so it isn't hidden behind e.g. a btrfs /home.
+    let mountpoint = mounts
+        .iter()
+        .find(|m| is_system_mountpoint(m))
+        .or(mounts.first())
+        .cloned();
+    out.push(Partition {
+        path: node
+            .path
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(format!("/dev/{}", node.name))),
+        size_bytes: node.size.unwrap_or(0),
+        fstype: node.fstype,
+        mountpoint,
+    });
+    for child in node.children.unwrap_or_default() {
+        flatten_into(child, out);
+    }
+}
+
 fn is_candidate_name(name: &str) -> bool {
     // Reject virtual block devices.
     let virtual_prefixes = ["zram", "ram", "dm-", "md"];
@@ -200,6 +252,12 @@ fn is_candidate_name(name: &str) -> bool {
         return false;
     }
     true
+}
+
+/// Like `find_drive_by_path`, but matches only a whole disk. Destructive
+/// operations use this so `/dev/sdb1` can't silently select (and wipe) `/dev/sdb`.
+pub fn find_whole_disk<'a>(drives: &'a [Drive], path: &Path) -> Option<&'a Drive> {
+    drives.iter().find(|d| d.path == path)
 }
 
 /// Find the drive a given path belongs to, by exact path match or by
@@ -319,6 +377,68 @@ mod tests {
         assert!(by_disk.is_some());
         assert!(by_part.is_some());
         assert_eq!(by_disk.unwrap().path, by_part.unwrap().path);
+    }
+
+    /// Root on LUKS + LVM: the only "/" mount is two levels below the
+    /// partition. Plus a btrfs disk whose MOUNTPOINT shows /home first.
+    const NESTED_LSBLK_JSON: &str = r#"
+    {"blockdevices": [
+      {"name":"sdc","path":"/dev/sdc","type":"disk","size":500107862016,"mountpoint":null,"mountpoints":[null],
+       "fstype":null,"serial":"S1","rm":false,"ro":false,"vendor":"ATA","model":"SSD",
+       "children": [
+         {"name":"sdc1","path":"/dev/sdc1","type":"part","size":524288000,"mountpoint":null,"mountpoints":[null],"fstype":"crypto_LUKS",
+          "children": [
+            {"name":"sdc1_crypt","path":"/dev/mapper/sdc1_crypt","type":"crypt","size":524271616,"mountpoint":null,"mountpoints":[null],"fstype":"LVM2_member",
+             "children": [
+               {"name":"vg-root","path":"/dev/mapper/vg-root","type":"lvm","size":524271616,"mountpoint":"/","mountpoints":["/"],"fstype":"ext4"}
+             ]}
+          ]}
+       ]},
+      {"name":"sdd","path":"/dev/sdd","type":"disk","size":256060514304,"mountpoint":null,"mountpoints":[null],
+       "fstype":null,"serial":"S2","rm":false,"ro":false,"vendor":null,"model":null,
+       "children": [
+         {"name":"sdd1","path":"/dev/sdd1","type":"part","size":256059465728,"mountpoint":"/home","mountpoints":["/home","/"],"fstype":"btrfs"}
+       ]},
+      {"name":"sde","path":"/dev/sde","type":"disk","size":16000000000,"mountpoint":null,"mountpoints":[null],
+       "fstype":null,"serial":"S3","rm":true,"ro":false,"vendor":null,"model":null,
+       "children": [
+         {"name":"sde1","path":"/dev/sde1","type":"part","size":16000000000,"mountpoint":null,"mountpoints":[null],"fstype":null,
+          "children": [
+            {"name":"veracrypt1","path":"/dev/mapper/veracrypt1","type":"dm","size":15999000000,"mountpoint":"/media/veracrypt1","mountpoints":["/media/veracrypt1"],"fstype":"exfat"}
+          ]}
+       ]}
+    ]}
+    "#;
+
+    #[test]
+    fn nested_root_and_btrfs_subvolume_root_are_system_drives() {
+        let drives = parse_lsblk(NESTED_LSBLK_JSON.as_bytes()).unwrap();
+        let get = |n: &str| drives.iter().find(|d| d.path.ends_with(n)).unwrap();
+        assert!(get("sdc").is_system_drive(), "root on LUKS+LVM missed");
+        assert!(get("sdd").is_system_drive(), "btrfs / behind /home missed");
+        assert!(!get("sde").is_system_drive());
+    }
+
+    #[test]
+    fn stacked_volumes_detected_and_plain_partitions_are_not() {
+        let drives = parse_lsblk(NESTED_LSBLK_JSON.as_bytes()).unwrap();
+        let get = |n: &str| drives.iter().find(|d| d.path.ends_with(n)).unwrap();
+        assert!(get("sdc").has_stacked_volumes());
+        assert!(
+            get("sde").has_stacked_volumes(),
+            "open VeraCrypt mapping missed"
+        );
+        assert!(get("sde").is_currently_mounted());
+        assert!(!get("sdd").has_stacked_volumes());
+        let sample = parse_lsblk(SAMPLE_LSBLK_JSON.as_bytes()).unwrap();
+        assert!(sample.iter().all(|d| !d.has_stacked_volumes()));
+    }
+
+    #[test]
+    fn find_whole_disk_rejects_partition_paths() {
+        let drives = parse_lsblk(SAMPLE_LSBLK_JSON.as_bytes()).unwrap();
+        assert!(find_whole_disk(&drives, Path::new("/dev/sdb")).is_some());
+        assert!(find_whole_disk(&drives, Path::new("/dev/sdb1")).is_none());
     }
 
     #[test]

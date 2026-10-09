@@ -174,8 +174,13 @@ fn cmd_encrypt(
     yes: bool,
 ) -> Result<()> {
     let drives = drive_linux::enumerate()?;
-    let drive = drive_linux::find_drive_by_path(&drives, device)
-        .ok_or_else(|| anyhow::anyhow!("no drive found matching {}", device.display()))?
+    let drive = drive_linux::find_whole_disk(&drives, device)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no whole disk matching {} (pass the disk, e.g. /dev/sdb, not a partition)",
+                device.display()
+            )
+        })?
         .clone();
 
     let plan = planner::format_and_encrypt(&drive, shred)?;
@@ -230,8 +235,13 @@ fn cmd_encrypt(
     let passphrase = if passphrase_stdin {
         read_secret_stdin()?
     } else {
-        read_secret_tty("Passphrase")?
+        let p = read_secret_tty("Passphrase")?;
+        if read_secret_tty("Confirm passphrase")?.as_bytes() != p.as_bytes() {
+            anyhow::bail!("passphrases do not match; aborting");
+        }
+        p
     };
+    operations::check_new_passphrase(&passphrase)?;
 
     let veracrypt = VeraCryptDriver::detect()?;
     let sha = veracrypt.binary_sha256()?;

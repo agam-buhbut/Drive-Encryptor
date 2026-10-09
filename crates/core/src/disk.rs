@@ -83,10 +83,10 @@ pub fn write_gpt_two_partitions(device: &Path, p1_size_bytes: u64) -> Result<()>
     if p1_size_mib < 1 {
         return Err(Error::InvalidInput("P1 size must be at least 1 MiB".into()));
     }
-    // --zap-all wipes any existing partition table + GPT backups.
-    run(&sgdisk, &["--zap-all", device_str], |s| {
-        Error::DriveEnum(format!("sgdisk zap: {}", s))
-    })?;
+    // Not `sgdisk --zap-all`: on a stick that once held a hybrid ISO image
+    // (corrupt primary GPT, valid backup) it zaps but exits 2, which used to
+    // abort the run after the old table was already gone.
+    wipe_partition_tables(device)?;
     // Two partitions: P1 = p1_size_mib MiB, P2 = rest.
     let p1_arg = format!("1:0:+{}M", p1_size_mib);
     let p1_type = "1:EBD0A0A2-B9E5-4433-87C0-68B6B72699C7";
@@ -97,6 +97,7 @@ pub fn write_gpt_two_partitions(device: &Path, p1_size_bytes: u64) -> Result<()>
     run(
         &sgdisk,
         &[
+            "--clear",
             "--new",
             &p1_arg,
             "--typecode",
@@ -114,6 +115,23 @@ pub fn write_gpt_two_partitions(device: &Path, p1_size_bytes: u64) -> Result<()>
         |s| Error::DriveEnum(format!("sgdisk new: {}", s)),
     )?;
     force_partition_rescan(device);
+    Ok(())
+}
+
+/// Zero the first and last MiB of `device`: MBR, primary GPT, backup GPT, and
+/// ISO9660 / filesystem superblocks near the start all live there.
+fn wipe_partition_tables(device: &Path) -> Result<()> {
+    use std::io::{Seek, SeekFrom, Write};
+
+    const SPAN: u64 = 1024 * 1024;
+    let mut f = std::fs::OpenOptions::new().write(true).open(device)?;
+    let total = f.seek(SeekFrom::End(0))?;
+    let zeros = vec![0u8; SPAN.min(total) as usize];
+    f.seek(SeekFrom::Start(0))?;
+    f.write_all(&zeros)?;
+    f.seek(SeekFrom::Start(total - zeros.len() as u64))?;
+    f.write_all(&zeros)?;
+    f.sync_all()?;
     Ok(())
 }
 
@@ -280,53 +298,36 @@ pub fn umount(mountpoint: &Path) -> Result<()> {
 ///   2. mkfs.fat from refusing because udisks2 auto-mounted the new
 ///      partition between `sgdisk` writing the GPT and our `mkfs.fat`.
 ///
-/// Tries a normal `umount` first; falls back to `umount -l` (lazy) when
-/// the device is busy. udisks2 may re-auto-mount after we return — call
-/// this again right before each step that expects an unmounted device.
+/// No lazy (`umount -l`) fallback: a busy filesystem would stay live and keep
+/// writing into the disk we are about to wipe, so we abort instead. udisks2
+/// may re-auto-mount after we return — call this again right before each
+/// step that expects an unmounted device.
 pub fn unmount_drive_partitions(device: &Path) -> Result<()> {
     let umount = find(UMOUNT_CANDIDATES)?;
-    let dev_str = device.to_string_lossy().into_owned();
     let mounts = std::fs::read_to_string("/proc/mounts")?;
     for line in mounts.lines() {
         let mut iter = line.split_whitespace();
-        let src = iter.next().unwrap_or("");
-        let dst = iter.next().unwrap_or("");
-        if src.is_empty() || dst.is_empty() {
+        let (Some(src), Some(dst)) = (iter.next(), iter.next()) else {
+            continue;
+        };
+        let src = unescape_mount_field(src);
+        if !is_disk_or_its_partition(&src, device) {
             continue;
         }
-        // Match the device itself or a partition node: /dev/sda OR /dev/sda1.
-        // For p-suffix devices (loop0p1, nvme0n1p2) the prefix match still
-        // works because the partition path starts with the disk path.
-        if src != dev_str && !src.starts_with(&format!("{}p", dev_str)) {
-            let suffix = src.strip_prefix(&dev_str).unwrap_or("");
-            if !suffix.chars().all(|c| c.is_ascii_digit()) || suffix.is_empty() {
-                continue;
-            }
-        }
-        tracing::info!(src, dst, "unmounting drive partition before destructive op");
+        let dst = unescape_mount_field(dst);
+        tracing::info!(src = %src.display(), dst = %dst.display(), "unmounting drive partition before destructive op");
         let out = Command::new(&umount)
-            .arg(dst)
+            .arg(&dst)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()?;
         if !out.status.success() {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            tracing::warn!(stderr = %stderr.trim(), "umount failed; falling back to umount -l");
-            let lazy = Command::new(&umount)
-                .arg("-l")
-                .arg(dst)
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output()?;
-            if !lazy.status.success() {
-                return Err(Error::DriveEnum(format!(
-                    "umount {} (and umount -l) both failed: {}",
-                    dst,
-                    String::from_utf8_lossy(&lazy.stderr).trim()
-                )));
-            }
+            return Err(Error::DriveEnum(format!(
+                "umount {} failed: {} — close anything using the drive and retry",
+                dst.display(),
+                String::from_utf8_lossy(&out.stderr).trim()
+            )));
         }
     }
     // Drain udev events so udisks2 sees the unmount before any subsequent op.
@@ -336,6 +337,46 @@ pub fn unmount_drive_partitions(device: &Path) -> Result<()> {
         });
     }
     Ok(())
+}
+
+/// True if `src` is `disk` itself or one of its partitions, decided by the
+/// kernel's sysfs topology (`/sys/class/block/sdb1` → `.../block/sdb/sdb1`)
+/// rather than name prefixes, which wrongly matched loop1 against loop10.
+fn is_disk_or_its_partition(src: &Path, disk: &Path) -> bool {
+    if src == disk {
+        return true;
+    }
+    let (Some(src_name), Some(disk_name)) = (src.file_name(), disk.file_name()) else {
+        return false;
+    };
+    src.parent() == disk.parent()
+        && std::fs::canonicalize(Path::new("/sys/class/block").join(src_name))
+            .ok()
+            .is_some_and(|p| p.parent().and_then(|d| d.file_name()) == Some(disk_name))
+}
+
+/// Decode the octal escapes (`\040` space, `\011` tab, `\012` newline,
+/// `\134` backslash) that /proc/mounts uses in its device and mountpoint fields.
+fn unescape_mount_field(s: &str) -> PathBuf {
+    use std::os::unix::ffi::OsStringExt;
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let octal = b.get(i + 1..i + 4).filter(|d| {
+            b[i] == b'\\'
+                && (b'0'..=b'3').contains(&d[0])
+                && d[1..].iter().all(|c| (b'0'..=b'7').contains(c))
+        });
+        if let Some(d) = octal {
+            out.push((d[0] - b'0') * 64 + (d[1] - b'0') * 8 + (d[2] - b'0'));
+            i += 4;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    PathBuf::from(std::ffi::OsString::from_vec(out))
 }
 
 /// Overwrite `device` with cryptographically random bytes, end-to-end. Used
@@ -435,6 +476,50 @@ mod tests {
         shred_device(&path, |_, _| called = true).unwrap();
         assert!(!called, "progress should not be called for empty device");
         assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn wipe_partition_tables_zeroes_head_and_tail_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("img");
+        let mib = 1024 * 1024;
+        std::fs::write(&path, vec![0xAAu8; 4 * mib + 7]).unwrap();
+        wipe_partition_tables(&path).unwrap();
+        let after = std::fs::read(&path).unwrap();
+        assert_eq!(after.len(), 4 * mib + 7);
+        assert!(after[..mib].iter().all(|&b| b == 0), "head not wiped");
+        assert!(
+            after[after.len() - mib..].iter().all(|&b| b == 0),
+            "tail not wiped"
+        );
+        assert!(
+            after[mib..after.len() - mib].iter().all(|&b| b == 0xAA),
+            "middle touched"
+        );
+
+        // Smaller than one span: whole thing zeroed, no underflow.
+        std::fs::write(&path, vec![0xAAu8; 1000]).unwrap();
+        wipe_partition_tables(&path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), vec![0u8; 1000]);
+    }
+
+    #[test]
+    fn unescape_mount_field_decodes_proc_mounts_escapes() {
+        assert_eq!(
+            unescape_mount_field(r"/media/me/USB\040DISK"),
+            PathBuf::from("/media/me/USB DISK")
+        );
+        assert_eq!(
+            unescape_mount_field(r"a\011b\134c"),
+            PathBuf::from("a\tb\\c")
+        );
+        assert_eq!(
+            unescape_mount_field("/dev/sdb1"),
+            PathBuf::from("/dev/sdb1")
+        );
+        // Incomplete or out-of-range escapes are left alone.
+        assert_eq!(unescape_mount_field(r"x\04"), PathBuf::from(r"x\04"));
+        assert_eq!(unescape_mount_field(r"x\777"), PathBuf::from(r"x\777"));
     }
 
     #[test]

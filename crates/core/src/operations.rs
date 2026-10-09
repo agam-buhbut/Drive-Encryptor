@@ -27,6 +27,20 @@ pub struct EncryptOutput {
     pub p2_partition: PathBuf,
 }
 
+/// Shortest passphrase `encrypt_format` accepts (same rule as the GUI).
+pub const MIN_PASSPHRASE_LEN: usize = 8;
+
+/// Reject passphrases that would leave the passphrase slot trivially open.
+pub fn check_new_passphrase(passphrase: &SecretBytes) -> Result<()> {
+    if passphrase.len() < MIN_PASSPHRASE_LEN {
+        return Err(Error::InvalidInput(format!(
+            "passphrase must be at least {} characters",
+            MIN_PASSPHRASE_LEN
+        )));
+    }
+    Ok(())
+}
+
 /// Format-and-encrypt the drive per `plan`. Wipes the drive completely.
 ///
 /// Emits structured progress to `sink` at each milestone. Checks
@@ -41,7 +55,8 @@ pub struct EncryptOutput {
 ///   3. Wipe partition table and write a fresh GPT with P1 (FAT32) + P2 (raw).
 ///   4. mkfs.fat on P1.
 ///   5. Mount P1 rw, write recovery.bin (wrapping the master with both
-///      passphrase and recovery key), unmount.
+///      passphrase and recovery key), unmount, then read it back and check
+///      that both secrets unwrap to the master.
 ///   6. Run `veracrypt --create` on P2 with the master keyfile.
 pub fn encrypt_format(
     plan: &EncryptionPlan,
@@ -49,6 +64,7 @@ pub fn encrypt_format(
     veracrypt: &VeraCryptDriver,
     sink: &dyn ProgressSink,
 ) -> Result<EncryptOutput> {
+    check_new_passphrase(passphrase)?;
     sink.emit(ProgressEvent::PlanReady {
         warnings: plan.warnings.clone(),
     });
@@ -137,6 +153,20 @@ pub fn encrypt_format(
 
     write_recovery_bin_to_p1(&p1, &recovery_bytes)?;
     sink.emit(ProgressEvent::RecoveryWritten);
+
+    // Prove the escrow before creating the volume: re-read recovery.bin from
+    // disk and unwrap it with both secrets. Done here rather than after
+    // `veracrypt --create`, which detaches loop devices (see e2e test).
+    let on_disk = read_recovery_bin(&plan.drive)?;
+    let via_pass = on_disk.unwrap_with_passphrase(passphrase)?;
+    let via_recov = on_disk.unwrap_with_recovery_key(&recovery_key)?;
+    if via_pass.as_bytes() != master_key.as_bytes() || via_recov.as_bytes() != master_key.as_bytes()
+    {
+        return Err(Error::Escrow(
+            "verification failed: recovery.bin read back from P1 does not unwrap to the master key"
+                .into(),
+        ));
+    }
 
     if sink.is_cancelled() {
         sink.emit(ProgressEvent::Aborted {
@@ -246,4 +276,19 @@ fn read_recovery_bin_from_p1(p1: &Path) -> Result<Vec<u8>> {
     let bytes = res?;
     umount_res?;
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_passphrase_length_rule() {
+        assert!(matches!(
+            check_new_passphrase(&SecretBytes::from("")),
+            Err(Error::InvalidInput(_))
+        ));
+        assert!(check_new_passphrase(&SecretBytes::from("1234567")).is_err());
+        assert!(check_new_passphrase(&SecretBytes::from("12345678")).is_ok());
+    }
 }

@@ -50,6 +50,12 @@ pub fn format_and_encrypt(drive: &Drive, shred: bool) -> Result<EncryptionPlan> 
     if drive.is_system_drive() {
         return Err(Error::SystemDriveRefused(drive.path.display().to_string()));
     }
+    if drive.has_stacked_volumes() {
+        return Err(Error::PlanRefused(format!(
+            "{} has active LVM/LUKS/RAID/VeraCrypt volumes on it; close or dismount them first",
+            drive.path.display()
+        )));
+    }
     if drive.readonly {
         return Err(Error::PlanRefused(format!(
             "{} is read-only",
@@ -167,6 +173,22 @@ mod tests {
         );
         let err = format_and_encrypt(&drive, false).unwrap_err();
         assert!(matches!(err, Error::SystemDriveRefused(_)));
+    }
+
+    #[test]
+    fn refuses_drive_with_stacked_volumes() {
+        let drive = fake_drive(
+            "/dev/sdb",
+            16_000_000_000,
+            true,
+            false,
+            vec![
+                part("/dev/sdb1", 16_000_000_000, None),
+                part("/dev/mapper/data", 16_000_000_000, Some("/srv/data")),
+            ],
+        );
+        let err = format_and_encrypt(&drive, false).unwrap_err();
+        assert!(matches!(err, Error::PlanRefused(s) if s.contains("LVM/LUKS")));
     }
 
     #[test]

@@ -100,7 +100,7 @@ download_veracrypt_deb() {
     require_sudo
     # Hardcoded latest stable release. If launchpad URLs ever change, the
     # script will exit cleanly and the user can install manually.
-    local version='1.26.24'
+    local version='1.26.29'
     local debian_codename
     debian_codename=$(. /etc/os-release && echo "${VERSION_ID:-12}")
     local arch

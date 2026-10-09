@@ -65,7 +65,7 @@
 │   ├─ KeyMaterial       (zeroizing buffers)                │
 │   └─ PdfExporter       (recovery key → PDF)               │
 └──────────────────────────┬────────────────────────────────┘
-                           │ subprocess (stdin only — never argv)
+                           │ subprocess (keyfile path only — no secret on argv)
 ┌──────────────────────────▼────────────────────────────────┐
 │  Bundled VeraCrypt CLI (per-platform binary in app bundle)│
 └───────────────────────────────────────────────────────────┘
@@ -75,11 +75,11 @@
 
 | Component | Owns | Boundary |
 |---|---|---|
-| GUI | Display, user input flow, prompts | Never holds long-lived secret material; passphrases are entered via a native OS prompt invoked from Rust, not via webview text inputs |
+| GUI | Display, user input flow, prompts | Never holds long-lived secret material. Design goal: passphrases entered via a native OS prompt invoked from Rust. Current wizard: typed into the webview (see § 14 status) |
 | DriveEnumerator | Listing candidate drives, classifying as system/data/removable | OS-specific impls behind a single trait |
 | EncryptionPlanner | Selecting mode, validating preconditions (free space, FS type, etc.), refusing system drive | All destructive go/no-go decisions land here |
 | EscrowCodec | `recovery.bin` read/write, KDF, AEAD wrap/unwrap, zeroization | Pure function, no I/O outside the file handle |
-| VeraCryptDriver | Subprocess lifecycle, stdin-only secret passing, progress parsing | Single point of contact with the bundled binary |
+| VeraCryptDriver | Subprocess lifecycle, keyfile hand-off via an in-memory file (memfd) | Single point of contact with the VeraCrypt binary |
 | KeyMaterial | `Zeroize`-on-drop buffers, locked-memory allocation where supported | Used by every layer that touches secrets |
 | PdfExporter | Generates a printable PDF of the recovery key + drive identifier + creation date | Writes to user-chosen path only, never a temp dir |
 
@@ -188,11 +188,13 @@ Stored as a single file in the FAT32 partition (P1) of the drive. Little-endian 
 | 156 | 12 | Nonce — recovery wrap | |
 | 168 | 64 | Ciphertext — wrapped master keyfile (recovery key) | |
 | 232 | 16 | GCM tag — recovery wrap | |
-| 248 | 32 | Drive label hash | SHA-256 of "DriveEncryptor:" + drive serial — informational |
+| 248 | 32 | Drive label hash | SHA-256 of "DriveEncryptor:" + the device path at creation (e.g. `/dev/sdb`) — informational, never checked |
 | 280 | 8 | Created-at | Unix seconds |
 | 288 | 32 | Header HMAC | HMAC-SHA256 over bytes 0..288, key = SHA-256("recovery.bin v1 hmac") — integrity only, not authentication |
 
-**Total: 320 bytes.** Padded to 4 KB in the file for alignment.
+**Total: 320 bytes.** The file is exactly these 320 bytes (readers accept trailing bytes).
+
+**Accepted KDF range on read:** memory ≤ 256 MiB, iterations ≤ 32, parallelism ≤ 8. The HMAC key is public, so the header is attacker-controllable; without caps a crafted drive could make unlock hang or exhaust RAM. Writers stay far below (64 MiB, t ≤ 10, p = 1).
 
 **The "master" inside both wraps is the same 64-byte VeraCrypt keyfile.** Both unlock paths recover the same VeraCrypt master, which then unlocks the actual data volume.
 
@@ -203,22 +205,22 @@ read recovery.bin from P1
 prompt user: passphrase or recovery key?
   passphrase path:  master = AES-GCM-Decrypt(wrap_pass,   key=Argon2id(passphrase,    salt_pass))
   recovery path:    master = AES-GCM-Decrypt(wrap_recov,  key=Argon2id(recovery_key,  salt_recov))
-write master to a tmpfs/SecureString-backed file (mode 0600 / DENY_ALL ACL)
-veracrypt --keyfiles=<master_path> --pim=0 --slot=N P2 <mountpoint>
-shred & unlink master_path
+put master in an anonymous memfd (Linux; never linked into any filesystem)
+veracrypt --keyfiles=/proc/<pid>/fd/<n> --password= --pim=0 P2 <mountpoint>
+scrub and close the memfd (the kernel frees it even if we are killed)
 zeroize all in-memory copies
 ```
 
 ### 5.4 "Open with stock CLI alone" — the manual path
 
-We publish a small standalone unwrap utility (single-file Python script + single-file Rust binary, both ~200 lines) in the project repo. A power user with only stock VeraCrypt can:
+We publish a small standalone unwrap utility (single-file Rust binary, `crates/unwrap`, independent of the core crate; a Python port is not written yet) in the project repo. A power user with only stock VeraCrypt can:
 
 ```
 # 1. Mount P1 (FAT32) — appears as a drive on either OS
-# 2. Run our published unwrap script:
-denc-unwrap recovery.bin --recovery-key 123456-234567-...    > master.key
+# 2. Run our published unwrap tool (prompts for the recovery key):
+denc-unwrap recovery.bin --recovery-key > master.key
 # 3. Mount the encrypted partition:
-veracrypt -t -k master.key --pim=0 /dev/sdX2 /mnt/secure       # Linux
+veracrypt --text --non-interactive --keyfiles=master.key --pim=0 --password= --protect-hidden=no /dev/sdX2 /mnt/secure   # Linux
 "VeraCrypt.exe" /v \\Device\\HarddiskN\\Partition2 /k master.key /l X /q   # Windows
 ```
 
@@ -227,7 +229,7 @@ The unwrap script is the entire spec — § 5.2 plus a few crypto calls. This gu
 ### 5.5 Recovery key encoding
 
 - **256 bits** of `getrandom()` / `BCryptGenRandom()` entropy.
-- **Encoding**: BitLocker-style — **16 groups of 6 decimal digits**. Each group encodes a 16-bit value `v` as the 6-digit decimal `v × 11`. Every group is therefore divisible by 11 (single-digit transcription error detection ~10/11 per group). 16 groups × 16 bits = exactly 256 bits, no wasted entropy.
+- **Encoding**: BitLocker-style — **16 groups of 6 decimal digits**. Each group encodes a 16-bit value `v` as the 6-digit decimal `v × 11`. Every group is therefore divisible by 11, which catches every single-digit typo within a group (changing one digit by d shifts the value by d·10^k ≡ ±d mod 11, never 0). 16 groups × 16 bits = exactly 256 bits, no wasted entropy.
 - **Canonical form**: `XXXXXX-XXXXXX-...-XXXXXX` (16 groups joined by `-`).
 - **Display**: 4 rows of 4 groups, monospace, with copy button.
 - **Liberal parsing on input**: strip whitespace, dashes, dots; case-insensitive (no letters present anyway).
@@ -242,15 +244,20 @@ The unwrap script is the entire spec — § 5.2 plus a few crypto calls. This gu
 
 | OS | Enumeration | System-drive detection |
 |---|---|---|
-| Linux | `lsblk -J -o NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE,SERIAL,RM,RO,VENDOR,MODEL` | Match `/proc/mounts` root mount → block device |
+| Linux | `lsblk -J -b -o NAME,PATH,TYPE,SIZE,MOUNTPOINT,MOUNTPOINTS,FSTYPE,SERIAL,RM,RO,VENDOR,MODEL` | Walk the whole lsblk tree under each disk (partitions and anything stacked on them: LUKS, LVM, RAID). System drive = anything in that tree mounted at `/`, `/boot`, `/boot/efi`, `/usr`, `/var`, or used as swap |
 | Windows | WMI: `Win32_DiskDrive`, `Win32_DiskPartition`, `Win32_LogicalDisk` | `Win32_OperatingSystem.SystemDrive` → physical disk via partition map |
 
 ### 6.2 Hard refusal rules
 
 The planner refuses the operation (no override) when:
-- The selected drive contains the running OS.
-- The selected drive is currently being written to by another process (Linux: `lsof` / Windows: volume shadow lock).
-- The selected drive's removable flag is `false` AND it is the only non-system internal disk (heuristic against "user picked their data drive thinking it was a USB").
+- The selected drive contains the running OS (§ 6.1 — including through LUKS/LVM and btrfs subvolumes).
+- The drive has active device-mapper / RAID volumes on it (LVM, LUKS, an open VeraCrypt volume, md). They can't be safely torn down by us.
+- The drive is read-only, or smaller than 100 MiB.
+- The CLI/GUI is given a partition path instead of a whole disk.
+
+Mounted partitions are unmounted before any write; if `umount` fails (busy), the operation stops — no lazy unmount.
+
+Not implemented yet: detecting in-flight writes by other processes (`lsof`), and the "only non-system internal disk" heuristic. Non-removable drives get a soft warning instead.
 
 ### 6.3 Soft warnings (override possible with explicit confirmation)
 
@@ -268,8 +275,8 @@ The user has two CLI surfaces:
 
 ```
 drive-encryptor list
-drive-encryptor encrypt /dev/sdX --mode=format --passphrase-stdin
-drive-encryptor unlock  /dev/sdX --recovery-key-stdin --mountpoint=/mnt/foo
+drive-encryptor encrypt /dev/sdX [--shred] [--passphrase-stdin] [--save-recovery-pdf PATH] [--yes]
+drive-encryptor unlock  /dev/sdX --mountpoint /mnt/foo [--with-recovery-key] [--secret-stdin]
 drive-encryptor lock    /mnt/foo
 drive-encryptor info    /dev/sdX
 ```
@@ -278,7 +285,7 @@ Same Rust core, no GUI required. Works headless (servers, SSH).
 
 ### 7.2 Stock-tool fallback
 
-Anyone with stock VeraCrypt + our published `denc-unwrap` script can recover any drive — see § 5.4. This is a **non-negotiable property** of the design and a permanent commitment.
+Anyone with stock VeraCrypt + our published `denc-unwrap` tool can recover any drive — see § 5.4. This is a **non-negotiable property** of the design and a permanent commitment.
 
 ---
 
@@ -290,24 +297,24 @@ Anyone with stock VeraCrypt + our published `denc-unwrap` script can recover any
 |---|---|---|
 | Webview (JS, HTML) | Untrusted-ish (in-process but executes vendor JS) | Tauri IPC → Core |
 | Core (Rust) | Trusted | Subprocess → VeraCrypt CLI; FS → recovery.bin |
-| VeraCrypt subprocess | Trusted (we shipped it, hash-pinned at build time) | Block device |
-| Bundled VeraCrypt binary on disk | Tamper-checked at startup via embedded SHA-256 | — |
+| VeraCrypt subprocess | Trusted | Block device |
+| VeraCrypt binary on disk | Today: system install found on `PATH`; SHA-256 logged, not checked. Planned (v0.4): bundled and hash-pinned | — |
 
 ### 8.2 Secret material lifecycle
 
 | Secret | Origin | Lives in | Zeroized when |
 |---|---|---|---|
-| User passphrase | Native OS password dialog (NOT webview input) | Rust `SecretString` (locked memory where supported) | After KDF derivation |
-| Recovery key (entry) | Native OS dialog | Same as above | After KDF derivation |
-| Recovery key (generated) | CSPRNG | Rust buffer | After PDF write + display dismissed |
-| Master keyfile (transient) | CSPRNG | Rust buffer + 0600 tmpfs file | After VeraCrypt mount completes |
+| User passphrase | CLI: tty / stdin. GUI: webview `<input>` (deviation, see § 14 status) | `SecretBytes` (zeroized, mlock'd where allowed) | After KDF derivation |
+| Recovery key (entry) | CLI: tty / stdin. GUI: webview `<input>` | Same as above | After KDF derivation |
+| Recovery key (generated) | CSPRNG | Rust buffer; GUI keeps a token for 30 min so the PDF can be saved; the display string is sent to the webview | After PDF write + display dismissed |
+| Master keyfile (transient) | CSPRNG | Rust buffer + anonymous memfd | After VeraCrypt mount completes |
 | Argon2id-derived KEKs | KDF | Rust buffer | After AEAD operation completes |
 
-**Webview JS never sees plaintext secrets.** Passphrase entry uses a native dialog spawned from Rust (`rfd` crate or platform-native secure prompt). The webview only sees opaque "passphrase entered: yes/no" signals.
+**Design goal: webview JS never sees plaintext secrets** (native dialog spawned from Rust; the webview only sees opaque tokens). **Current GUI does not meet it:** passphrases and recovery keys are typed into the webview, and the generated recovery key is displayed there. `request_passphrase` (zenity) exists for a future hardened mode.
 
 ### 8.3 Subprocess argv hygiene
 
-VeraCrypt accepts `--password` on the command line. We **never** use it — that exposes secrets via `/proc/<pid>/cmdline` (Linux) and Process Explorer (Windows). All secrets pass via stdin.
+VeraCrypt accepts `--password` on the command line. We **never** put a secret there — that exposes it via `/proc/<pid>/cmdline` (Linux) and Process Explorer (Windows). Volumes are keyfile-only: we pass `--password=` (empty) and `--keyfiles=/proc/<our pid>/fd/<n>`, where the fd is an anonymous memfd holding the 64-byte master. The path is not secret, and nothing is left on disk if the process dies.
 
 ### 8.4 Threat model: what we do and don't protect against
 
@@ -388,11 +395,17 @@ Before any release, audit:
 - The key zeroization story across the GUI / IPC / subprocess boundary (§ 8.2)
 - The pre-shred CSPRNG source and end-of-device handling (§ 4.2)
 - Subprocess argv handling for any VeraCrypt invocation (§ 8.3)
-- The published `denc-unwrap` script (it is part of the trust boundary for recovery)
+- The published `denc-unwrap` tool (it is part of the trust boundary for recovery)
 
 ---
 
-## 14. v0.3 — Tauri GUI architecture (planned, not yet implemented)
+## 14. v0.3 — Tauri GUI architecture
+
+**Status:** the encrypt and unlock wizards are implemented (`crates/gui`). Deviations from the plan below:
+- Passphrases are typed into the webview and sent over IPC (`commit_passphrase`), not taken from a native dialog. `request_passphrase` (zenity) is kept but unused.
+- `inspect_drive` is not implemented; `plan_encrypt(path, shred)` and `start_encrypt(drive_path, shred, passphrase_token)` take the drive path, not a plan object.
+- The whole GUI process, including the webview, runs as root. A privileged helper with an unprivileged UI would shrink that.
+- Only one encrypt/unlock runs at a time; the wizard can't go back once encryption has started.
 
 **Goal:** the GUI sits on top of the v0.2 CLI core. No core refactor; the GUI is a new crate that links `denc_core` and exposes Tauri commands matching the CLI subcommands.
 
